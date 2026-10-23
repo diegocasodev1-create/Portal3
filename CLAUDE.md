@@ -1,0 +1,176 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+"Portal3" is a standalone FastAPI app (Python 3.12) serving a vanilla HTML/CSS/JS admin UI. Admins use it to manage rows in the Azure SQL table `core.UsuariosEntel`, which controls access to the MiraGroup Power Pages external portal (Portal1 = Energía, Portal2 = MiraStock, Portal3 = this app). It sends welcome emails through Microsoft Graph.
+
+`brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
+
+## Current status (as of 2026-10-23, end of day)
+
+### Next session: start here
+1. **The user's two tests from the app are pending** (External ID was enabled just before closing):
+   - `diegocaso.dev1@gmail.com`: it already has a code account `485b9597-69c8-483e-97ec-dfeb998e7f50` and no DB row. Create the user, then «Enviar correo».
+   - A brand-new email that was never in External ID: create the user, then «Enviar correo». Ask the user which email.
+   - Then check, read-only:
+     - Logs: Log Analytics if the replica scaled to 0.
+     - Graph in tenant `cb938793-…`: `diegocaso.dev1` still has ONE account (that id, federated/mail), and the new one is federated/mail with no password (`passwordPolicies`, `lastPasswordChangeDateTime` and `creationType` all `null`).
+   - Show the result as a table.
+2. **Legacy password accounts:** `17848@senati.pe` (`73310320-…`) and `diego.caso@miragroup.cl` (`0ac3f5d7-…`). The user deletes them (including from the recycle bin). Until then, «Enviar correo» returns 409 for them.
+3. **Sync** (`python -m app.tools.sync_externalid`):
+   - It is safe now: v6 code locally and in Azure.
+   - Order: dry run first, the user reviews, then `--apply`. Each run needs the user's OK (it reads the production table).
+4. **senati.pe never received the welcome email** (Graph 202 both times). TI needs a Message trace. See "Mail delivery" below.
+
+### Deployment
+- URL: https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io
+- Revision mode `Single`: traffic follows the latest revision, and no older one is kept for rollback.
+- **Running: image v6, revision `ca-mira-admin--0000008`, with `AUTH_ENABLED=false`, `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** `/health` OK and clean startup at ~17:00 UTC on 2026-10-23. The next image is **v7**.
+- Image history:
+  - v3: auth off.
+  - v4: External ID + PDF attachment.
+  - v5: no attachment (`--0000005`; `--0000006` = v5 with `EXTID_ENABLED=false`).
+  - v6: federated/mail accounts + 409 for legacy accounts (`--0000007` with External ID off, `--0000008` with it on).
+- **az CLI** is logged in to both tenants (`e3112796-…` workforce/subscription, `cb938793-…` External ID), and the active one can switch. Before az commands on Azure resources, run `az account set --subscription 38b3f030-c7b5-4d38-822b-c533f88cd34a`.
+- Logs older than the current replica (it scales to 0): Log Analytics workspace `d8a192a1-91f6-4add-882c-d1396d044ba0`, table `ContainerAppConsoleLogs_CL`, via `az monitor log-analytics query`. The app logs the user Id and the External ID account id, never the email.
+
+### Auth
+- **Auth is temporarily OFF (`AUTH_ENABLED=false`, user's decision on 2026-10-20).** The app has no login.
+  - The auth code is kept so it can be re-enabled (`AUTH_ENABLED=true`, no new image) or replaced by a custom login. Do not remove the auth code.
+  - While off, anyone with the URL can change the production table, send mail and create or delete External ID accounts. The risk was explained.
+  - The user declined IP restriction and Easy Auth.
+- Portal entry URL (unused while auth is off): `POST https://<fqdn>/auth/portal`.
+
+### Mail
+- **ON since 2026-10-20:**
+  - Settings: `MAIL_ENABLED=true`, `MAIL_SENDER=no-reply@miragroup.cl`, `GRAPH_CLIENT_ID=e722c6e6-d604-4c2d-88ad-01c62a2c9235`.
+  - The secret `graph-client-secret` exists only in Azure.
+  - The local `.env` has no Graph secret and keeps `MAIL_ENABLED` unchanged.
+- **The email has no attachment** since v5 (the user's decision). The PDF guide stays in `app/docs/` unused. The template text is the user's final code-only version.
+- **Sender name:** it shows "No - Reply". The fix is on TI's side: `Set-Mailbox -Identity no-reply@miragroup.cl -DisplayName "Miragroup Corporativo"`. The payload sends no `from`.
+- **Mail delivery:** two sends to `17848@senati.pe` (14:42 and 14:50 UTC, 2026-10-23) got Graph 202 but never arrived.
+  - senati.pe's MX is Exchange Online, so a quarantine at the recipient's EOP is likely.
+  - The app cannot see Sent Items: `saveToSentItems=false`, and the mail app has no read permission.
+  - Needs a TI Message trace (sender `no-reply@miragroup.cl`) and a check of the no-reply inbox for bounces.
+
+### External ID (tenant "MiraGroup Externos", `cb938793-21a7-440f-9787-2d3924b3fd67`)
+- App registration `35d28c4c-144c-4e3c-9b37-0f0ae4970625` ("Admin Usuarios - Creacion de cuentas") has `User.ReadWrite.All`.
+  - `/users/{id}/authentication/*` returns 403, so authentication methods cannot be read.
+  - Its secret is in Container App secret `extid-client-secret` and in the local `.env`. The user loaded both with the scratchpad script.
+- **Local `.env` has `EXTID_ENABLED=true` and the secret.** The local UI and the sync tool create, rename and delete real accounts.
+- **Key finding (2026-10-23): only `{"signInType":"federated","issuer":"mail"}` accounts sign in with the code only.**
+  - The v4/v5 code created `emailAddress` + random-password accounts, because Graph rejects `emailAddress` without `passwordProfile` (400 `Request_BadRequest`).
+  - The portal asked those accounts for a password. Microsoft documents that existing password users keep being prompted for a password.
+  - A Graph-created federated/mail account (`diegocaso.dev1@gmail.com`, `485b9597-…`) matched a self-registered one field for field. The user confirmed it signs in with the code only.
+- **v4/v5 bug, fixed in v6:** `buscar_por_correo` only filtered by the domain issuer. It missed federated/mail accounts and could have duplicated them with a password.
+- Details of the v6 logic are under "External ID" in Architecture.
+
+### Verified / not verified
+- Verified:
+  - The portal public key loads (local and Azure).
+  - `/health`, the no-session page, and the 401/404 checks pass.
+  - **138 tests pass** (13 in `tests/test_sin_auth.py`).
+  - Code-only sign-in with a federated/mail account works.
+  - Welcome emails arrive at other domains (per the user).
+- Not tested yet:
+  - A real login with a portal token.
+  - That the token carries the `email` claim (DEBUG log "Claims recibidos…").
+  - The UI in a real browser beyond the user's own use.
+  - v6 create + «Enviar correo» end to end (the pending tests above).
+
+### Pending on the user / TI
+- Decide how the app will be protected again (portal auth or a custom login).
+- TI: change the sender DisplayName, and run the senati.pe Message trace.
+
+### Notes
+- `64.76.106.60` is the public IP of the user's network, which this machine also uses. Visits from it in the logs are the user's or Claude's.
+- Scratchpad helper scripts (read-only Graph lookups, account comparison, SQL row read, the secret loader) live in the session scratchpad. They are not part of the repo.
+
+### Recommended security follow-ups (not done)
+- Re-enable authentication. Free stopgaps that were offered: ingress IP restrictions, Easy Auth, or turning mail and External ID off while auth is off.
+- Switch from `sqladmin` to a dedicated `mira_admin_app` DB user (SQL is in the README) and rotate the `sqladmin` password, which was exposed in chat.
+- Use an Azure `SESSION_SECRET` different from the local one.
+- The SQL firewall uses the pre-existing `AllowAllWindowsAzureIps` rule.
+
+## Working agreement
+
+- Show a short plan (files and steps) and wait for the user's OK before writing code. Deliver complete files.
+- Use neutral Spanish in the UI, API messages (`{"detail": "..."}`), comments and replies to the user.
+- **The user approves each command** that touches the DB or Azure.
+  - Auto mode's classifier blocks production DB reads ("Production Reads"). When it does, explain why and let the user decide; do not work around it.
+  - **Never create Azure resources that have a cost without an explicit OK.** Reuse the existing environment, ACR and SQL.
+  - Claude's shell is non-interactive: `Read-Host` cannot prompt. To enter a secret, write a script to the scratchpad that reads it with `Read-Host -AsSecureString`, discards the az output and prints only success or failure. The user runs it in their own PowerShell window.
+- Never print secrets from `.env`, ACR credentials or Container App secrets. Show only secret *names*. Scripts that need secrets read them from `.env` inside the script and keep them out of the output.
+- Do not create or modify Power Pages files. The user handles the portal.
+- The frontend uses no frameworks or external JS/CSS libraries. The only external resource is the Google Fonts Exo 2 font.
+
+## Architecture (cross-cutting points)
+
+- **Identity flow:**
+  1. The Power Pages home gets the user's token with **`POST`** `/_services/auth/token` on the portal (GET returns 404; no antiforgery needed).
+  2. It sends a form POST with `token` to `/auth/portal`.
+  3. `auth.py` validates the RS256 JWT against `{PORTAL_BASE_URL}/_services/auth/publickey`. The key is cached in memory and reloaded once on a signature failure, at most once every 60 s. It checks signature, expiry and issuer (the issuer is compared to the portal host, with or without `https://`). Audience is checked only if `TOKEN_AUDIENCE` is set.
+  4. It reads the email from `email`, falling back to `preferred_username`, and lowercases it.
+  5. It checks SQL for `Portal3 = 1 AND Activo = 1`.
+  6. It issues an itsdangerous-signed cookie `mira_admin_sesion` that stores only the email (HttpOnly, Secure, SameSite=Lax). Middleware in `main.py` renews the cookie on every valid request, which gives the idle timeout. It does not renew it on `/auth/*` or `/static/*`.
+  7. It redirects with 303 to `/`.
+- **`AUTH_ENABLED` (default `true`):** with `false`, `/` serves `index.html` directly. The session middleware neither reads nor renews the cookie. `require_admin` returns `None` without checking SQL, so every `/api/*` handler takes `admin: str | None`, and the "self" rules apply only when `admin` is set. `/api/me` returns `{"correo": null, "authEnabled": false}` (with `true` it stays exactly `{"correo": ...}`), and `app.js` then hides the `.sesion` header block. CSP, headers and CSRF are unchanged. Tests toggle it with the `sin_auth` / `cliente_sin_auth` fixtures.
+- **Authorization:** `require_admin` re-checks Portal3 and Activo in SQL on *every* `/api/*` request, so revoking access cuts it off immediately. No session → 401; no permission → 403.
+- **CSRF:** POST/PUT/PATCH/DELETE on `/api/*` require `Content-Type: application/json` and `X-Requested-With: mira-admin`. Otherwise the app returns 403.
+- **Security headers:** Strict CSP (`script-src 'self'`; no inline scripts or `style=""` attributes in HTML), `nosniff` and `Referrer-Policy: no-referrer`. Never log tokens, cookies or bodies; claim *names* only at DEBUG. `main.py` forces the msal/httpx/httpcore loggers to WARNING.
+- **DB (`db.py`):** pyodbc with ODBC Driver 18 and parameterized queries only. NULL bits count as 0. Correo is lowercased and trimmed.
+  - The real schema is in the `db.py` docstring. `Apellido` is `NOT NULL`, so an empty apellido is stored as `''`.
+  - Duplicate emails: the app pre-checks, and also catches unique-index errors 2627/2601 on `UQ_UsuariosEntel_Correo`. Either way it returns 409.
+- **Gerencia is not free text.** The MiraStock agent compares it against `core.StockLurinERI.Gerencia`. Valid values are the sorted `UNION` of distinct Gerencia from both tables. The API matches the input case-insensitively but stores the DB's exact spelling.
+- **Create and email are separate.** This overrides brief §4/§5.
+  - `POST /api/usuarios` inserts (`Activo=1, InvitacionEnviada=0`) and ensures the External ID account. It returns `{usuario, mensaje: "Usuario creado.", avisoCuenta: false}`. No email is sent.
+  - `POST /api/usuarios/{id}/enviar-correo` handles both the first send and resends. It ensures the External ID account first. On success it sets `InvitacionEnviada=1` and returns `{correoEnviado: true, mensaje: "Correo enviado a <correo>."}`. On failure it leaves the flag unchanged and returns `{"detail": "No se pudo enviar el correo: <motivo>"}`: 502 if Graph failed, 503 if mail is disabled or credentials are missing. `mailer.ResultadoEnvio.no_configurado` decides which.
+  - The old `/reenviar` route no longer exists.
+  - The UI button says "Enviar correo" or "Reenviar correo" depending on `InvitacionEnviada`, and on success redraws only that row.
+- **Mail (`mailer.py`):** this is the only send path in the repo (Graph `sendMail` via msal client credentials, `saveToSentItems=false`). The payload has `subject`, HTML `body` and `toRecipients` only, with no attachments and no `from`. The sender name comes from Exchange.
+  - The template text is the user's final version (code-only sign-in). It must not mention passwords, "Cree una cuenta", "¿Ha olvidado su contraseña?" or "Si ya tienes cuenta…"; `test_mailer.py` checks this.
+- **External ID (`externalid.py`):**
+  - Graph `/users` in tenant `EXTID_TENANT_ID`, using its own msal client.
+  - **Account format (code-only sign-in):** identity `{"signInType":"federated","issuer":"mail","issuerAssignedId":<correo>}` + `mail`, with NO `passwordProfile`/`passwordPolicies`. This is the same as self-registration with a code, and it was verified in the portal on 2026-10-23. An `emailAddress`/domain identity is a password account, and the portal asks it for a password. Never go back to that format.
+  - **`buscar_por_correo`** → `Cuenta(id, tipo)` or `None`:
+    - Filter `identities/any(...)` with `issuer eq 'mail'` first, then `issuer eq '<EXTID_DOMAIN>'`. `'` is doubled.
+    - Graph ignores the issuer when filtering `emailAddress` identities, so the type comes from the returned identities: `codigo` (`TIPO_CODIGO`) or `contrasena` (`TIPO_CONTRASENA`). If both exist, the code account wins.
+  - **`crear`:** a single POST, no retry. On a non-201 it raises, and the log has the full Graph response body. Graph error bodies hold code, message and request-id, with no secrets.
+  - **`asegurar`** → `(id, estado)`, where estado is `CREADA`, `EXISTE_CODIGO` or `EXISTE_CONTRASENA`; it returns `(None, None)` when disabled. A legacy password account is never duplicated: it is logged as a WARNING with its id. Converting it means deleting it (and purging the recycle bin) and then re-ensuring.
+  - `actualizar_nombre` and `eliminar` work on both types.
+  - Errors raise `ErrorExternalId(motivo)`, with a Spanish message. With `EXTID_ENABLED=false` every function is a DEBUG-logged no-op.
+  - `main._cuenta()` wraps calls and returns `(resultado, motivo)`; motivo is None on success, or the reason (or "error inesperado").
+  - API behavior:
+    - Create: INSERT, then `asegurar`. On failure the INSERT is kept and the response is 201 with a warning.
+    - enviar-correo: `asegurar` first. On failure → 502 "No se pudo crear la cuenta de acceso: …", and the mail is not sent.
+    - enviar-correo with a legacy password account (`EXISTE_CONTRASENA`) → **409** "La cuenta de acceso es antigua (con contraseña): elimínala y vuelve a intentar". No mail is sent and `InvitacionEnviada` is not marked (user's decision, option b, 2026-10-23). The UI shows it as an error toast, through the generic `detail` handling.
+    - PUT: `actualizar_nombre` only when Nombre/Apellido changed.
+    - DELETE: `eliminar` after the SQL delete.
+    - PUT, POST create and DELETE return `avisoCuenta` (bool). The UI shows a yellow `toast-aviso` when it is true.
+  - Tests: the `cuentas` fixture (`CuentasFalsas` in `conftest.py`) fakes the API-level calls. `tests/test_externalid.py` fakes `httpx.request` + msal for the module and the sync script.
+  - **Sync tool:** `python -m app.tools.sync_externalid [--apply]` reads `db.listar_usuarios_con_acceso()`. It exits 2 and touches nothing if External ID is disabled or missing credentials. This reads the **production** table, so the user approves each run.
+- **Business rules (API and UI):** At least one portal must be checked. Correo cannot be edited. An admin cannot delete themselves or remove their own Portal3 (400). Validation errors return 422 `{detail, errores: {campo: msg}}`, and the UI shows them next to each field.
+- **Pages:** `/` and the templates in `app/templates/` get `{{PORTAL_URL}}` (and `{{MENSAJE}}`) substituted at startup with escaped values. There is no Jinja.
+
+## Commands (PowerShell, from the repo root; venv at `.venv`)
+
+- Install: `.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt`
+- Run locally: `.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000`. It reads `.env`, which has real prod credentials and `LOG_LEVEL=DEBUG`. Local UI actions change the **production** table.
+- Tests: `.\.venv\Scripts\python.exe -m pytest`, or a single test with `pytest tests/test_usuarios.py::test_name`.
+  - `tests/conftest.py` sets its own env vars before importing the app, so the real `.env` is never used.
+  - It swaps `app.db` and `mailer.enviar_bienvenida` for in-memory fakes and signs tokens with throwaway RSA keys.
+  - The TestClient uses `https://testserver`. Cookies set manually need `domain="testserver.local"`.
+- JS syntax check: there is no Node on this machine. Use esprima from a scratch target dir: `pip install --target <dir> esprima==4.0.1`, then `esprima.parseScript(...)`.
+- Deploy a new version (always a new tag; v7 is next): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
+- Azure layout:
+  - `ca-mira-admin` is in `RG-COPILOT-DEV`, East US, with 0.25 vCPU, 0.5 Gi and 0–1 replicas.
+  - It reuses environment `managedEnvironment-rgscripth25prod-818f` and ACR `acrscripth25prod`, both in `rg-script-h25-prod`.
+  - The image pulls with ACR admin credentials, because the user is only Contributor and cannot assign `AcrPull`.
+  - The SQL server `sqlcopilotprd01` is in `RG-COPILOT-DEV`.
+- PowerShell 5.1 gotchas:
+  - `$ErrorActionPreference = "Stop"` turns az's stderr warnings ("altered by the following extension") into fatal errors. Use `Continue` and validate the values explicitly.
+  - `Set-Content -Encoding utf8` writes a BOM.
+  - `-MaximumRedirection 0` throws an error when a redirect happens.
+- The image is `python:3.12-slim-bookworm` + `msodbcsql18` (Debian 12 has Microsoft's repo), running uvicorn on port 8000 with `--proxy-headers`. `.dockerignore` excludes `.env`, `.venv/`, `.claude/`, `brief.md`, `CLAUDE.md`, the tests and the dev files.

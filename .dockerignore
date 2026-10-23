@@ -1,0 +1,21 @@
+# Secretos y entorno local
+.env
+.env.*
+!.env.example
+.venv/
+
+# Caché y artefactos
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Herramientas y documentación que no van en la imagen
+.claude/
+.git/
+.gitignore
+brief.md
+CLAUDE.md
+README.md
+tests/
+pytest.ini
+requirements-dev.txt

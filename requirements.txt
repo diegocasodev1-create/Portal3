@@ -1,0 +1,11 @@
+fastapi==0.150.0
+uvicorn[standard]==0.54.0
+pydantic==2.14.1
+pydantic-settings==2.16.0
+pyodbc==5.3.0
+PyJWT[crypto]==2.15.1
+cryptography==50.0.2
+itsdangerous==2.2.0
+httpx==0.28.1
+msal==1.39.0
+python-multipart==0.0.32

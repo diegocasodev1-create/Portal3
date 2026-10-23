@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Administración de usuarios | MiraGroup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body data-portal-url="{{PORTAL_URL}}">
+  <a class="saltar" href="#contenido">Saltar al contenido</a>
+
+  <header class="encabezado">
+    <div class="marca">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h1>Administración de usuarios</h1>
+    </div>
+    <div class="sesion">
+      <span class="admin-correo" id="admin-correo" aria-label="Administrador conectado"></span>
+      <a class="btn btn-secundario" href="{{PORTAL_URL}}">Volver al portal</a>
+      <button type="button" class="btn btn-fantasma" id="btn-logout">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <main id="contenido" class="contenido">
+    <section class="barra card" aria-label="Búsqueda y filtros">
+      <div class="campo campo-buscar">
+        <label for="buscar">Buscar</label>
+        <input type="search" id="buscar" placeholder="Correo, nombre, apellido o gerencia" autocomplete="off">
+      </div>
+      <div class="campo">
+        <label for="filtro-portal">Portal</label>
+        <select id="filtro-portal">
+          <option value="">Todos</option>
+          <option value="Portal1">Energía</option>
+          <option value="Portal2">MiraStock</option>
+          <option value="Portal3">Administración</option>
+        </select>
+      </div>
+      <button type="button" class="btn btn-primario" id="btn-nuevo">+ Nuevo usuario</button>
+    </section>
+
+    <section class="card card-tabla" aria-labelledby="titulo-lista">
+      <h2 id="titulo-lista" class="sr-only">Usuarios</h2>
+      <p class="resumen" id="resumen" aria-live="polite"></p>
+
+      <div id="estado-carga" class="estado" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span>Cargando usuarios…</span>
+      </div>
+      <div id="estado-vacio" class="estado" hidden>
+        <p id="texto-vacio">No hay usuarios para mostrar.</p>
+      </div>
+      <div id="estado-error" class="estado estado-error" role="alert" hidden>
+        <p id="texto-error">No se pudieron cargar los usuarios.</p>
+        <button type="button" class="btn btn-secundario" id="btn-reintentar">Reintentar</button>
+      </div>
+
+      <table class="tabla" id="tabla" hidden>
+        <thead>
+          <tr>
+            <th scope="col">Correo</th>
+            <th scope="col">Nombre</th>
+            <th scope="col">Apellido</th>
+            <th scope="col">Gerencia</th>
+            <th scope="col">Energía</th>
+            <th scope="col">MiraStock</th>
+            <th scope="col">Admin</th>
+            <th scope="col">Correo enviado</th>
+            <th scope="col">Fecha alta</th>
+            <th scope="col">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="tabla-cuerpo"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <!-- Pantalla de sesión vencida / sin permisos -->
+  <div class="bloqueo" id="bloqueo" hidden>
+    <div class="card card-aviso" role="alertdialog" aria-modal="true" aria-labelledby="bloqueo-titulo" aria-describedby="bloqueo-texto">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h2 id="bloqueo-titulo">Tu sesión venció</h2>
+      <p id="bloqueo-texto">Vuelve a ingresar desde el Portal Corporativo.</p>
+      <a class="btn btn-primario" href="{{PORTAL_URL}}" id="bloqueo-link">Ir al Portal Corporativo</a>
+    </div>
+  </div>
+
+  <!-- Modal crear / editar -->
+  <div class="modal-fondo" id="modal-usuario" hidden>
+    <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="modal-usuario-titulo">
+      <form id="form-usuario" novalidate>
+        <div class="modal-cabecera">
+          <h2 id="modal-usuario-titulo">Nuevo usuario</h2>
+          <button type="button" class="btn-cerrar" data-cerrar aria-label="Cerrar">×</button>
+        </div>
+
+        <p class="error-general" id="error-general" role="alert" hidden></p>
+
+        <div class="campo">
+          <label for="f-correo">Correo <span class="req" aria-hidden="true">*</span></label>
+          <input type="email" id="f-correo" name="correo" maxlength="256" autocomplete="off" required aria-describedby="e-correo">
+          <p class="error-campo" id="e-correo"></p>
+        </div>
+        <div class="fila-campos">
+          <div class="campo">
+            <label for="f-nombre">Nombre <span class="req" aria-hidden="true">*</span></label>
+            <input type="text" id="f-nombre" name="nombre" maxlength="100" autocomplete="off" required aria-describedby="e-nombre">
+            <p class="error-campo" id="e-nombre"></p>
+          </div>
+          <div class="campo">
+            <label for="f-apellido">Apellido</label>
+            <input type="text" id="f-apellido" name="apellido" maxlength="100" autocomplete="off" aria-describedby="e-apellido">
+            <p class="error-campo" id="e-apellido"></p>
+          </div>
+        </div>
+        <div class="campo">
+          <label for="f-gerencia">Gerencia <span class="req" aria-hidden="true">*</span></label>
+          <select id="f-gerencia" name="gerencia" required aria-describedby="e-gerencia">
+            <option value="">Selecciona una gerencia</option>
+          </select>
+          <p class="error-campo" id="e-gerencia"></p>
+        </div>
+        <fieldset class="campo portales" aria-describedby="e-portales">
+          <legend>Portales habilitados <span class="req" aria-hidden="true">*</span></legend>
+          <label class="check"><input type="checkbox" id="f-portal1" name="portal1"> Portal de Energía</label>
+          <label class="check"><input type="checkbox" id="f-portal2" name="portal2"> Portal MiraStock</label>
+          <label class="check"><input type="checkbox" id="f-portal3" name="portal3"> Administración de usuarios</label>
+          <p class="error-campo" id="e-portales"></p>
+        </fieldset>
+
+        <div class="modal-acciones">
+          <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+          <button type="submit" class="btn btn-primario" id="btn-guardar">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal confirmar eliminación -->
+  <div class="modal-fondo" id="modal-eliminar" hidden>
+    <div class="modal modal-chico card" role="alertdialog" aria-modal="true" aria-labelledby="modal-eliminar-titulo" aria-describedby="modal-eliminar-texto">
+      <div class="modal-cabecera">
+        <h2 id="modal-eliminar-titulo">Eliminar usuario</h2>
+        <button type="button" class="btn-cerrar" data-cerrar aria-label="Cerrar">×</button>
+      </div>
+      <p id="modal-eliminar-texto">¿Seguro que quieres eliminar a <strong id="eliminar-correo"></strong>? Perderá el acceso a todos los portales. También se eliminará su cuenta de acceso al portal. Esta acción no se puede deshacer.</p>
+      <div class="modal-acciones">
+        <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+        <button type="button" class="btn btn-peligro" id="btn-confirmar-eliminar">Eliminar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>
