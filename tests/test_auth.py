@@ -40,7 +40,7 @@ def test_token_valido_crea_sesion_y_redirige(cliente):
     assert cliente.get("/api/me").json() == {"correo": ADMIN}
     pagina = cliente.get("/")
     assert pagina.status_code == 200
-    assert "Administración de usuarios" in pagina.text
+    assert "Portal de administración" in pagina.text
 
 
 def test_correo_se_normaliza_y_usa_preferred_username(cliente):

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Portal de administración | MiraGroup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/comun.js" defer></script>
+</head>
+<body data-portal-url="{{PORTAL_URL}}">
+  <a class="saltar" href="#contenido">Saltar al contenido</a>
+
+  <header class="encabezado">
+    <div class="marca">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h1>Portal de administración</h1>
+    </div>
+    <div class="sesion">
+      <span class="admin-correo" id="admin-correo" aria-label="Administrador conectado"></span>
+      <a class="btn btn-secundario" href="{{PORTAL_URL}}">Volver al portal</a>
+      <button type="button" class="btn btn-fantasma" id="btn-logout">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <main id="contenido" class="contenido">
+    <h2 class="sr-only">Módulos</h2>
+    <div class="modulos">
+      <a class="card card-modulo" href="/historial">
+        <svg class="modulo-icono" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span class="modulo-titulo">Logs control de ingresos</span>
+        <span class="modulo-texto">Consulta los ingresos a los portales de Energía y MiraStock, con indicadores y exportación a Excel.</span>
+        <span class="modulo-ir" aria-hidden="true">Entrar →</span>
+      </a>
+      <a class="card card-modulo" href="/contactos">
+        <svg class="modulo-icono" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM20 20v-1.5a3.5 3.5 0 0 0-2.5-3.35M15.5 4.15a3.5 3.5 0 0 1 0 6.7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="modulo-titulo">Centro Administración de contactos</span>
+        <span class="modulo-texto">Crea, edita y elimina usuarios, define sus portales habilitados y envía el correo de bienvenida.</span>
+        <span class="modulo-ir" aria-hidden="true">Entrar →</span>
+      </a>
+    </div>
+  </main>
+
+  <!-- Pantalla de sesión vencida / sin permisos -->
+  <div class="bloqueo" id="bloqueo" hidden>
+    <div class="card card-aviso" role="alertdialog" aria-modal="true" aria-labelledby="bloqueo-titulo" aria-describedby="bloqueo-texto">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h2 id="bloqueo-titulo">Tu sesión venció</h2>
+      <p id="bloqueo-texto">Vuelve a ingresar desde el Portal Corporativo.</p>
+      <a class="btn btn-primario" href="{{PORTAL_URL}}" id="bloqueo-link">Ir al Portal Corporativo</a>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>

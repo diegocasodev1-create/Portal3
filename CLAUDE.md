@@ -8,31 +8,55 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
 
-## Current status (as of 2026-10-23, end of day)
+## Current status (as of 2026-10-28; v7 deployed that day)
+
+### What happened after the v6 deploy (from Log Analytics and Graph)
+- 2026-10-23, all from the user's IP:
+  - 17:05 and 17:46 UTC: users Id 51, 52, 53 and 54 were deleted.
+  - 17:11: user Id 55 was created. Its new code account is `9aff2b59-c702-43d3-9ced-78b142c0a100` (`diego.caso@miragroup.cl`, federated/mail). «Enviar correo» returned 200.
+  - 17:47: user Id 56 was created, a new email with code account `767daab3-4637-4133-81f7-f9919df19a93` (federated/mail). «Enviar correo» returned 200, then a PUT followed.
+- 2026-10-26 19:14: PUT on user Id 55.
+- **The legacy password accounts are gone.** `17848@senati.pe` (`73310320-…`) and `diego.caso@miragroup.cl` (`0ac3f5d7-…`) no longer exist, and the recycle bin is empty. `17848@senati.pe` has no account of any type now.
+- `diegocaso.dev1@gmail.com` still has ONE account (`485b9597-…`, federated/mail). It was not created from the app, so it presumably still has no DB row.
+- All accounts created since 2026-10-23 are federated/mail with `passwordPolicies` null.
+- **Self-service sign-up is OFF.** User flow `registro-inicio-portales` (`4d198f40-3ed6-4700-9eaa-13e2e31171dc`) has `isSignUpAllowed: false`, so External ID accounts come only from this app (or the sync).
+  - The PATCH payload is the untracked `body.json` in the repo root. Whether to keep, delete or ignore it is undecided.
+
+### v7 (2026-10-28): home page + «Logs control de ingresos» — DEPLOYED
+- `/` is now the home page with two cards, `/contactos` is the user admin (moved unchanged) and `/historial` is the new read-only access log. Details under "Pages" and "Access history" in Architecture.
+- **222 tests pass** (84 new in `tests/test_historial.py`). JS checked with esprima.
+- The user reviewed `/`, `/contactos` and `/historial` in a browser (locally, against the prod DB) and approved them on 2026-10-28.
+- Deployed on 2026-10-28 as revision `--0000009`. `/health`, the three pages and the new JS files return 200, and startup was clean.
+- **Where the access rows come from** (all owned by the user; Claude must not create or change tables, views, flows or Power Pages files):
+  - The user created `core.HistorialAccesos` and the view `core.vHistorialAccesos` in CopilotKnowledgeDB on 2026-10-28.
+  - CHECK constraints on `core.HistorialAccesos`: `Portal IN (N'MiraStock', N'Energía')` and `Resultado IN (N'Denegado', N'OK')`.
+  - The view is a `UNION ALL` of two branches. Both take `Usuario` from `core.UsuariosEntel` via `LEFT JOIN` on the lowercased, trimmed correo.
+    - Branch 1 reads `core.HistorialAccesos` as is, with no filter.
+    - Branch 2 reads `core.SesionesAgente`. Each generated key counts as one access, shown as `N'MiraStock'` / `N'OK'`, with `Fecha = CAST(CreadoEn AS DATETIME2(0))`.
+  - **Energía:**
+    - Clicking the Energía card on the external portal's Home calls the Power Automate flow `ConsultarAccesoPortal` with `{correo, destino: 'Energia'}`. The Home redirects even if the flow fails or takes longer than 3 s.
+    - With `destino = 'Energia'`, the flow inserts a row into `core.HistorialAccesos`: Correo, `Portal = 'Energía'`, `Resultado` OK or Denegado depending on `Portal1`, and Fecha in UTC. `destino` is an optional input of the flow.
+    - Tested on 2026-10-28: the row appears in `/historial`.
+  - **MiraStock** is logged automatically through `core.SesionesAgente`. Nothing writes to `HistorialAccesos` for it.
+  - `Fecha` and `Correo` are nullable in the view. The API returns `null` for them and the CSV leaves the cell empty.
 
 ### Next session: start here
-1. **The user's two tests from the app are pending** (External ID was enabled just before closing):
-   - `diegocaso.dev1@gmail.com`: it already has a code account `485b9597-69c8-483e-97ec-dfeb998e7f50` and no DB row. Create the user, then «Enviar correo».
-   - A brand-new email that was never in External ID: create the user, then «Enviar correo». Ask the user which email.
-   - Then check, read-only:
-     - Logs: Log Analytics if the replica scaled to 0.
-     - Graph in tenant `cb938793-…`: `diegocaso.dev1` still has ONE account (that id, federated/mail), and the new one is federated/mail with no password (`passwordPolicies`, `lastPasswordChangeDateTime` and `creationType` all `null`).
-   - Show the result as a table.
-2. **Legacy password accounts:** `17848@senati.pe` (`73310320-…`) and `diego.caso@miragroup.cl` (`0ac3f5d7-…`). The user deletes them (including from the recycle bin). Until then, «Enviar correo» returns 409 for them.
-3. **Sync** (`python -m app.tools.sync_externalid`):
-   - It is safe now: v6 code locally and in Azure.
+1. **Ask the user** whether the welcome emails for Id 55 and 56 arrived and whether code-only sign-in worked for them. Not verified by Claude.
+2. **Sync** (`python -m app.tools.sync_externalid`): there is no evidence it was ever run.
+   - It is safe now: the v6 External ID logic is unchanged in v7, locally and in Azure.
    - Order: dry run first, the user reviews, then `--apply`. Each run needs the user's OK (it reads the production table).
-4. **senati.pe never received the welcome email** (Graph 202 both times). TI needs a Message trace. See "Mail delivery" below.
+3. **senati.pe never received the welcome email** (Graph 202 both times on 2026-10-23). TI needs a Message trace. See "Mail delivery" below.
 
 ### Deployment
 - URL: https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io
 - Revision mode `Single`: traffic follows the latest revision, and no older one is kept for rollback.
-- **Running: image v6, revision `ca-mira-admin--0000008`, with `AUTH_ENABLED=false`, `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** `/health` OK and clean startup at ~17:00 UTC on 2026-10-23. The next image is **v7**.
+- **Running: image v7, revision `ca-mira-admin--0000009`, with `AUTH_ENABLED=false`, `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~15:56 UTC on 2026-10-28. `/health` is OK and startup was clean. It is the only revision, with 100% of the traffic. The next image is **v8**.
 - Image history:
   - v3: auth off.
   - v4: External ID + PDF attachment.
   - v5: no attachment (`--0000005`; `--0000006` = v5 with `EXTID_ENABLED=false`).
   - v6: federated/mail accounts + 409 for legacy accounts (`--0000007` with External ID off, `--0000008` with it on).
+  - v7: home page + `/contactos` + `/historial` (read-only access log) (`--0000009`).
 - **az CLI** is logged in to both tenants (`e3112796-…` workforce/subscription, `cb938793-…` External ID), and the active one can switch. Before az commands on Azure resources, run `az account set --subscription 38b3f030-c7b5-4d38-822b-c533f88cd34a`.
 - Logs older than the current replica (it scales to 0): Log Analytics workspace `d8a192a1-91f6-4add-882c-d1396d044ba0`, table `ContainerAppConsoleLogs_CL`, via `az monitor log-analytics query`. The app logs the user Id and the External ID account id, never the email.
 
@@ -71,14 +95,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Verified:
   - The portal public key loads (local and Azure).
   - `/health`, the no-session page, and the 401/404 checks pass.
-  - **138 tests pass** (13 in `tests/test_sin_auth.py`).
+  - **222 tests pass** (13 in `tests/test_sin_auth.py`, 84 in `tests/test_historial.py`).
   - Code-only sign-in with a federated/mail account works.
   - Welcome emails arrive at other domains (per the user).
 - Not tested yet:
   - A real login with a portal token.
   - That the token carries the `email` claim (DEBUG log "Claims recibidos…").
   - The UI in a real browser beyond the user's own use.
-  - v6 create + «Enviar correo» end to end (the pending tests above).
+  - v6 create + «Enviar correo» end to end: the app side worked for Id 55 and 56 (federated/mail account created, Graph 200 response). Delivery and code sign-in still need the user's confirmation.
 
 ### Pending on the user / TI
 - Decide how the app will be protected again (portal auth or a custom login).
@@ -116,7 +140,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   5. It checks SQL for `Portal3 = 1 AND Activo = 1`.
   6. It issues an itsdangerous-signed cookie `mira_admin_sesion` that stores only the email (HttpOnly, Secure, SameSite=Lax). Middleware in `main.py` renews the cookie on every valid request, which gives the idle timeout. It does not renew it on `/auth/*` or `/static/*`.
   7. It redirects with 303 to `/`.
-- **`AUTH_ENABLED` (default `true`):** with `false`, `/` serves `index.html` directly. The session middleware neither reads nor renews the cookie. `require_admin` returns `None` without checking SQL, so every `/api/*` handler takes `admin: str | None`, and the "self" rules apply only when `admin` is set. `/api/me` returns `{"correo": null, "authEnabled": false}` (with `true` it stays exactly `{"correo": ...}`), and `app.js` then hides the `.sesion` header block. CSP, headers and CSRF are unchanged. Tests toggle it with the `sin_auth` / `cliente_sin_auth` fixtures.
+- **`AUTH_ENABLED` (default `true`):** with `false`, `/`, `/contactos` and `/historial` are served directly. The session middleware neither reads nor renews the cookie. `require_admin` returns `None` without checking SQL, so every `/api/*` handler takes `admin: str | None`, and the "self" rules apply only when `admin` is set. `/api/me` returns `{"correo": null, "authEnabled": false}` (with `true` it stays exactly `{"correo": ...}`), and `app.js` / `comun.js` then hide the `.sesion` header block. CSP, headers and CSRF are unchanged. Tests toggle it with the `sin_auth` / `cliente_sin_auth` fixtures.
 - **Authorization:** `require_admin` re-checks Portal3 and Activo in SQL on *every* `/api/*` request, so revoking access cuts it off immediately. No session → 401; no permission → 403.
 - **CSRF:** POST/PUT/PATCH/DELETE on `/api/*` require `Content-Type: application/json` and `X-Requested-With: mira-admin`. Otherwise the app returns 403.
 - **Security headers:** Strict CSP (`script-src 'self'`; no inline scripts or `style=""` attributes in HTML), `nosniff` and `Referrer-Policy: no-referrer`. Never log tokens, cookies or bodies; claim *names* only at DEBUG. `main.py` forces the msal/httpx/httpcore loggers to WARNING.
@@ -152,7 +176,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - Tests: the `cuentas` fixture (`CuentasFalsas` in `conftest.py`) fakes the API-level calls. `tests/test_externalid.py` fakes `httpx.request` + msal for the module and the sync script.
   - **Sync tool:** `python -m app.tools.sync_externalid [--apply]` reads `db.listar_usuarios_con_acceso()`. It exits 2 and touches nothing if External ID is disabled or missing credentials. This reads the **production** table, so the user approves each run.
 - **Business rules (API and UI):** At least one portal must be checked. Correo cannot be edited. An admin cannot delete themselves or remove their own Portal3 (400). Validation errors return 422 `{detail, errores: {campo: msg}}`, and the UI shows them next to each field.
-- **Pages:** `/` and the templates in `app/templates/` get `{{PORTAL_URL}}` (and `{{MENSAJE}}`) substituted at startup with escaped values. There is no Jinja.
+- **Pages:** `inicio.html` (`/`), `contactos.html` (`/contactos`), `historial.html` (`/historial`) and the templates in `app/templates/` get `{{PORTAL_URL}}` (and `{{MENSAJE}}`) substituted at startup with escaped values. There is no Jinja.
+  - The three routes share `main._pagina_protegida(request, html)`, which is the old `/` logic: auth off → page; no session → `sin_acceso` 200; DB error → 503; no Portal3/Activo → `sin_permisos` 403. `/auth/portal` still redirects 303 to `/`, which is now the home page.
+  - `contactos.html` + `app.js` is the user admin, unchanged except the h1 («Centro Administración de contactos») and the «Inicio» link. `app.js` has its own API client and header code. `inicio.html` and `historial.html` use `comun.js` (`window.Mira`: `api`, `solicitar`, `el`, `toast`, `setOcupado`, session-expired overlay, `/api/me` header, logout).
+  - The header markup is duplicated in each HTML (no templating). `.nav-inicio` holds the «Inicio» link outside `.sesion`, so it stays visible when auth is off.
+- **Access history (`/historial`, read-only):**
+  - Source: view `core.vHistorialAccesos` (Fecha DATETIME2(0) UTC, Correo lowercase, Usuario may be empty/NULL, Portal `Energía`|`MiraStock`, Resultado `OK`|`Denegado`). Owned by the user, not by this app.
+  - `db.py`: `FiltrosHistorial` dataclass; `_where_historial` builds the WHERE from fixed fragments + `?` (correo uses `LIKE ? ESCAPE '\'` with `% _ [ \` escaped, lowercased). `listar_historial(filtros, pagina, tamano=50)` → `(filas, total)` with `ORDER BY Fecha DESC, Correo OFFSET/FETCH`. `resumen_historial(filtros, tz_offset_min)` → totals + `porDia` grouped by `CAST(DATEADD(minute, ?, Fecha) AS date)`.
+  - `main.py`: `_filtros_historial` dependency validates everything at once and raises `ErrorValidacion(errores)` → 422 `{detail, errores}`. Portal/resultado match case-insensitively and are stored canonical. Dates: ISO 8601, aware → converted to naive UTC, naive = UTC; `desde` inclusive, `hasta` exclusive, `desde < hasta`. `pagina` 1..1,000,000, `tz_offset_min` −840..840. `admin` is declared first so 401 comes before 422.
+  - Endpoints: `GET /api/historial` → `{filas, total, pagina, tamano, paginas}` (Fecha as `...Z`); `/api/historial/resumen` → `{total, usuariosUnicos, porPortal, denegados, porDia}`; `/api/historial/csv` → BOM + `;` + CRLF, Fecha `AAAA-MM-DD hh:mm:ss` UTC, cells starting with `= + - @ \t \r` get a `'`, filename `historial_accesos_AAAAMMDD.csv`, cap `TOPE_CSV_HISTORIAL` = 50,000 (more → header `X-Historial-Truncado`).
+  - `historial.js`: default last 7 days; local days → UTC (`hasta` = next day 00:00 local); `tz_offset_min = -getTimezoneOffset()`. CSS bar chart (bar heights set via `element.style`, which the CSP allows); zero-filled up to 92 days, labels up to 31. The CSV is downloaded with fetch + blob, so 401/422 show in the UI and truncation shows a warning toast.
+  - Tests: `BDFalsa.historial` + `agregar_acceso()` in `conftest.py`, and `llamadas_historial` records the filters received. `test_historial.py` also checks the SQL text and params of `db.py` with a fake cursor.
 
 ## Commands (PowerShell, from the repo root; venv at `.venv`)
 
@@ -163,7 +197,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - It swaps `app.db` and `mailer.enviar_bienvenida` for in-memory fakes and signs tokens with throwaway RSA keys.
   - The TestClient uses `https://testserver`. Cookies set manually need `domain="testserver.local"`.
 - JS syntax check: there is no Node on this machine. Use esprima from a scratch target dir: `pip install --target <dir> esprima==4.0.1`, then `esprima.parseScript(...)`.
-- Deploy a new version (always a new tag; v7 is next): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
+- Deploy a new version (always a new tag; v8 is next): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
 - Azure layout:
   - `ca-mira-admin` is in `RG-COPILOT-DEV`, East US, with 0.25 vCPU, 0.5 Gi and 0–1 replicas.
   - It reuses environment `managedEnvironment-rgscripth25prod-818f` and ACR `acrscripth25prod`, both in `rg-script-h25-prod`.

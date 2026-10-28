@@ -29,7 +29,7 @@ os.environ.update(
 )
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import jwt
 import pytest
@@ -73,6 +73,8 @@ class BDFalsa:
         self.gerencias = ["Gerencia Comercial", "Gerencia de Operaciones", "Gerencia TI"]
         self.usuarios: dict[int, dict] = {}
         self._siguiente = 1
+        self.historial: list[dict] = []  # filas de core.vHistorialAccesos (Fecha UTC sin zona)
+        self.llamadas_historial: list[tuple] = []
         self.agregar(ADMIN, "Ana", "Admin", "Gerencia TI", p3=True)
 
     def agregar(self, correo, nombre="Nombre", apellido="", gerencia="Gerencia TI",
@@ -132,6 +134,46 @@ class BDFalsa:
     def marcar_invitacion_enviada(self, uid):
         self.usuarios[uid]["InvitacionEnviada"] = True
 
+    def agregar_acceso(self, fecha, correo, portal="Energía", resultado="OK", usuario=""):
+        self.historial.append(
+            {"Fecha": fecha, "Usuario": usuario, "Correo": correo, "Portal": portal, "Resultado": resultado}
+        )
+
+    def _filtrar_historial(self, f):
+        filas = self.historial
+        if f.correo:
+            filas = [r for r in filas if f.correo.lower() in r["Correo"]]
+        if f.portal:
+            filas = [r for r in filas if r["Portal"] == f.portal]
+        if f.resultado:
+            filas = [r for r in filas if r["Resultado"] == f.resultado]
+        if f.desde:
+            filas = [r for r in filas if r["Fecha"] >= f.desde]
+        if f.hasta:
+            filas = [r for r in filas if r["Fecha"] < f.hasta]
+        return sorted(filas, key=lambda r: (r["Fecha"], r["Correo"]), reverse=True)
+
+    def listar_historial(self, filtros, pagina, tamano=50):
+        self.llamadas_historial.append(("listar", filtros, pagina, tamano))
+        filas = self._filtrar_historial(filtros)
+        inicio = (pagina - 1) * tamano
+        return [dict(r) for r in filas[inicio:inicio + tamano]], len(filas)
+
+    def resumen_historial(self, filtros, tz_offset_min):
+        self.llamadas_historial.append(("resumen", filtros, tz_offset_min))
+        filas = self._filtrar_historial(filtros)
+        por_dia: dict[str, int] = {}
+        for r in filas:
+            dia = (r["Fecha"] + timedelta(minutes=tz_offset_min)).date().isoformat()
+            por_dia[dia] = por_dia.get(dia, 0) + 1
+        return {
+            "total": len(filas),
+            "usuariosUnicos": len({r["Correo"] for r in filas}),
+            "porPortal": {p: sum(r["Portal"] == p for r in filas) for p in ("Energía", "MiraStock")},
+            "denegados": sum(r["Resultado"] == "Denegado" for r in filas),
+            "porDia": [{"dia": d, "total": n} for d, n in sorted(por_dia.items())],
+        }
+
 
 @pytest.fixture
 def bd(monkeypatch):
@@ -139,7 +181,7 @@ def bd(monkeypatch):
     for nombre in (
         "es_admin", "listar_gerencias", "listar_usuarios", "obtener_usuario", "existe_correo",
         "crear_usuario", "actualizar_usuario", "eliminar_usuario", "marcar_invitacion_enviada",
-        "listar_usuarios_con_acceso",
+        "listar_usuarios_con_acceso", "listar_historial", "resumen_historial",
     ):
         monkeypatch.setattr(db, nombre, getattr(falsa, nombre))
     return falsa

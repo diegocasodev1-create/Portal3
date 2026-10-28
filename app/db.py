@@ -5,9 +5,15 @@ Tipos reales (INFORMATION_SCHEMA.COLUMNS):
   Nombre nvarchar(100) NOT NULL | Apellido nvarchar(100) NOT NULL | Gerencia nvarchar(150) NULL
   Portal1/Portal2 bit NOT NULL default 0 | Activo bit NOT NULL default 1
   FechaAlta datetime2 NOT NULL default sysutcdatetime() | Portal3/InvitacionEnviada bit NULL
+
+Vista core.vHistorialAccesos (solo lectura; la mantiene el usuario, no esta app):
+  Fecha datetime2(0) en UTC | Correo (minúsculas) | Usuario (Nombre + Apellido; vacío o NULL si el
+  correo no está en UsuariosEntel) | Portal ('Energía' | 'MiraStock') | Resultado ('OK' | 'Denegado')
 """
 
 from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any, Iterator
 
 import pyodbc
@@ -172,3 +178,105 @@ def marcar_invitacion_enviada(usuario_id: int) -> None:
     with _conexion() as conn:
         cur = conn.cursor()
         cur.execute("UPDATE core.UsuariosEntel SET InvitacionEnviada = 1 WHERE Id = ?", usuario_id)
+
+
+# ---------------------------------------------------------------------------
+# Historial de accesos (solo lectura sobre core.vHistorialAccesos)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class FiltrosHistorial:
+    """Filtros opcionales. `desde` es inclusivo y `hasta` exclusivo, ambos en UTC sin zona."""
+
+    correo: str | None = None
+    portal: str | None = None
+    resultado: str | None = None
+    desde: datetime | None = None
+    hasta: datetime | None = None
+
+
+def _escapar_like(texto: str) -> str:
+    # Con ESCAPE '\' los comodines del texto se buscan como caracteres literales.
+    return "".join("\\" + c if c in "\\%_[" else c for c in texto)
+
+
+def _where_historial(filtros: FiltrosHistorial) -> tuple[str, list[Any]]:
+    """Arma el WHERE con fragmentos fijos y parámetros `?`."""
+    condiciones: list[str] = []
+    params: list[Any] = []
+    if filtros.correo:
+        condiciones.append("Correo LIKE ? ESCAPE '\\'")
+        params.append("%" + _escapar_like(filtros.correo.strip().lower()) + "%")
+    if filtros.portal:
+        condiciones.append("Portal = ?")
+        params.append(filtros.portal)
+    if filtros.resultado:
+        condiciones.append("Resultado = ?")
+        params.append(filtros.resultado)
+    if filtros.desde:
+        condiciones.append("Fecha >= ?")
+        params.append(filtros.desde)
+    if filtros.hasta:
+        condiciones.append("Fecha < ?")
+        params.append(filtros.hasta)
+    sql = (" WHERE " + " AND ".join(condiciones)) if condiciones else ""
+    return sql, params
+
+
+def listar_historial(
+    filtros: FiltrosHistorial, pagina: int, tamano: int = 50
+) -> tuple[list[dict[str, Any]], int]:
+    """Filas de la página pedida (Fecha DESC) y el total de filas que cumplen los filtros."""
+    where, params = _where_historial(filtros)
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT COUNT(*) FROM core.vHistorialAccesos{where}", *params)
+        total = cur.fetchone()[0]
+        cur.execute(
+            "SELECT Fecha, ISNULL(Usuario, '') AS Usuario, Correo, Portal, Resultado"
+            f" FROM core.vHistorialAccesos{where}"
+            " ORDER BY Fecha DESC, Correo"
+            " OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
+            *params, (pagina - 1) * tamano, tamano,
+        )
+        filas = [
+            {"Fecha": r[0], "Usuario": (r[1] or "").strip(), "Correo": r[2], "Portal": r[3], "Resultado": r[4]}
+            for r in cur.fetchall()
+        ]
+    return filas, total
+
+
+def resumen_historial(filtros: FiltrosHistorial, tz_offset_min: int) -> dict[str, Any]:
+    """Totales e indicadores. Los días se agrupan en hora local: DATEADD(minute, tz_offset_min, Fecha)."""
+    where, params = _where_historial(filtros)
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT Correo),"
+            " ISNULL(SUM(CASE WHEN Portal = N'Energía' THEN 1 ELSE 0 END), 0),"
+            " ISNULL(SUM(CASE WHEN Portal = 'MiraStock' THEN 1 ELSE 0 END), 0),"
+            " ISNULL(SUM(CASE WHEN Resultado = 'Denegado' THEN 1 ELSE 0 END), 0)"
+            f" FROM core.vHistorialAccesos{where}",
+            *params,
+        )
+        total, unicos, energia, mirastock, denegados = cur.fetchone()
+        cur.execute(
+            "SELECT Dia, COUNT(*) FROM ("
+            " SELECT CAST(DATEADD(minute, ?, Fecha) AS date) AS Dia"
+            f" FROM core.vHistorialAccesos{where}"
+            ") d GROUP BY Dia ORDER BY Dia",
+            tz_offset_min, *params,
+        )
+        por_dia = [{"dia": _texto_dia(r[0]), "total": r[1]} for r in cur.fetchall()]
+    return {
+        "total": total,
+        "usuariosUnicos": unicos,
+        "porPortal": {"Energía": energia, "MiraStock": mirastock},
+        "denegados": denegados,
+        "porDia": por_dia,
+    }
+
+
+def _texto_dia(valor: Any) -> str:
+    # El driver devuelve date (o str con controladores antiguos).
+    return valor.isoformat() if isinstance(valor, date) else str(valor)[:10]

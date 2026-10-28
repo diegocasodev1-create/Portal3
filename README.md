@@ -16,6 +16,21 @@ La app también crea la **cuenta de acceso** del usuario en Microsoft Entra Exte
 Externos"), así el usuario entra directo con un código por correo, sin pasar por "Cree una cuenta"
 (ver "Cuentas de acceso en External ID").
 
+Desde la v7 incluye además **Logs control de ingresos**: una página de solo lectura sobre la vista
+`core.vHistorialAccesos` (ver "Historial de accesos").
+
+## Páginas
+
+| Ruta | Página |
+|---|---|
+| `/` | **Portal de administración** (inicio): dos cards, «Logs control de ingresos» y «Centro Administración de contactos» |
+| `/contactos` | **Centro Administración de contactos**: la administración de usuarios (hasta la v6 estaba en `/`) |
+| `/historial` | **Logs control de ingresos**: indicadores, gráfico por día, tabla paginada y exportación a Excel |
+
+Las tres se comportan igual frente a `AUTH_ENABLED`: con `true` exigen sesión válida y `Portal3 = 1 AND Activo = 1`
+(si no, muestran "Ingresa desde el Portal Corporativo" o "No tienes permisos"); con `false` se sirven directo.
+Comparten `styles.css` y el encabezado; `/contactos` y `/historial` tienen el enlace «Inicio».
+
 ## Cómo funciona el ingreso
 
 1. La home de Power Pages obtiene el token del usuario con **`POST /_services/auth/token`** (con GET el portal
@@ -24,7 +39,7 @@ Externos"), así el usuario entra directo con un código por correo, sin pasar p
 2. La app valida el JWT (RS256) con la clave pública del portal, toma el correo (`email` o
    `preferred_username`) y verifica en SQL `Portal3 = 1 AND Activo = 1`.
 3. Si es válido, crea una cookie de sesión firmada (solo guarda el correo; expira por inactividad
-   según `SESSION_MAX_AGE_MIN`) y redirige a `/`.
+   según `SESSION_MAX_AGE_MIN`) y redirige a `/` (el inicio).
 4. Cada llamada a `/api/*` vuelve a verificar el permiso en SQL: si a alguien le quitan `Portal3`,
    pierde el acceso en ese mismo momento.
 
@@ -35,7 +50,7 @@ Los POST/PUT/DELETE de `/api/*` exigen `Content-Type: application/json` y `X-Req
 `AUTH_ENABLED` (por defecto `true`) activa todo lo anterior. **Hoy está en `false` en Azure de forma temporal**:
 la app ya no se abre desde el portal y, por ahora, no tiene inicio de sesión. Con `AUTH_ENABLED=false`:
 
-- `/` muestra directamente la app. No aparece "Ingresa desde el Portal Corporativo" ni se redirige al portal.
+- `/`, `/contactos` y `/historial` se muestran directamente. No aparece "Ingresa desde el Portal Corporativo" ni se redirige al portal.
 - `/api/*` funciona sin sesión: no lee ni renueva la cookie y no consulta `Portal3`/`Activo` de quien entra.
   `GET /api/me` responde `{"correo": null, "authEnabled": false}`.
 - La interfaz oculta el correo del admin, «Volver al portal» y «Cerrar sesión».
@@ -44,8 +59,9 @@ la app ya no se abre desde el portal y, por ahora, no tiene inicio de sesión. C
 - `/auth/portal`, `/auth/logout` y todo el código de autenticación siguen en la app, sin usarse.
 - Al arrancar, el log registra un `WARNING` que avisa que la autenticación está desactivada.
 
-> ⚠️ Sin autenticación, cualquiera que llegue a la URL puede crear, editar y borrar usuarios de producción
-> y enviar correos desde `MAIL_SENDER`. La protección CSRF no lo impide: solo frena a otros sitios web.
+> ⚠️ Sin autenticación, cualquiera que llegue a la URL puede crear, editar y borrar usuarios de producción,
+> enviar correos desde `MAIL_SENDER` y ver y exportar el historial de accesos (con correos).
+> La protección CSRF no lo impide: solo frena a otros sitios web.
 
 Para volver al ingreso desde el portal (no requiere nueva imagen):
 
@@ -67,9 +83,52 @@ az containerapp update -n $APP -g $RG --set-env-vars "AUTH_ENABLED=true"
 | `PUT /api/usuarios/{id}` | Edita nombre, apellido, gerencia y portales (el correo no se edita). Si cambia el nombre, lo actualiza en la cuenta de acceso. → `{usuario, mensaje, avisoCuenta}` |
 | `DELETE /api/usuarios/{id}` | Elimina en SQL y luego la cuenta de acceso (un admin no puede eliminarse a sí mismo). → `{mensaje, avisoCuenta}` |
 | `POST /api/usuarios/{id}/enviar-correo` | Asegura la cuenta de acceso y envía o reenvía el correo de bienvenida (ver abajo) |
+| `GET /api/historial` | Historial de accesos, 50 por página (Fecha desc). Filtros más `pagina`. → `{filas, total, pagina, tamano, paginas}` |
+| `GET /api/historial/resumen` | Indicadores con los mismos filtros más `tz_offset_min`. → `{total, usuariosUnicos, porPortal, denegados, porDia}` |
+| `GET /api/historial/csv` | CSV con los mismos filtros, sin paginar (tope 50.000 filas) |
 
 Los errores siempre vienen como `{"detail": "mensaje en español"}`. `avisoCuenta: true` indica que la operación en
 SQL salió bien pero falló la cuenta de acceso; el `mensaje` trae el motivo y la interfaz lo muestra como aviso.
+
+## Historial de accesos
+
+Solo lectura sobre la vista `core.vHistorialAccesos` (base CopilotKnowledgeDB). La vista une
+`core.HistorialAccesos` (ingresos a Energía) con `core.SesionesAgente` (ingresos a MiraStock) y toma el nombre de
+`core.UsuariosEntel`. La tabla, la vista y los flujos de Power Automate que la alimentan **no son parte de esta
+app**: los administra el usuario.
+
+| Columna | Contenido |
+|---|---|
+| `Fecha` | `DATETIME2(0)` en UTC |
+| `Correo` | En minúsculas |
+| `Usuario` | Nombre + Apellido; vacío si el correo no está en `UsuariosEntel` (la tabla muestra «—») |
+| `Portal` | `Energía` o `MiraStock` |
+| `Resultado` | `OK` o `Denegado` |
+
+**Filtros** (todos opcionales, los mismos en los tres endpoints):
+
+| Parámetro | Regla |
+|---|---|
+| `correo` | Contiene, sin distinguir mayúsculas (máx. 256). `%`, `_` y `[` se buscan como texto |
+| `portal` | `Energía` o `MiraStock` (sin distinguir mayúsculas) |
+| `resultado` | `OK` o `Denegado` (sin distinguir mayúsculas) |
+| `desde` / `hasta` | ISO 8601. Con zona se convierte a UTC; sin zona se toma como UTC. `desde` inclusivo, `hasta` exclusivo, `desde < hasta` |
+| `pagina` | Solo `/api/historial`. Entero ≥ 1 (por defecto 1) |
+| `tz_offset_min` | Solo `/resumen`. Minutos a sumar a UTC para agrupar por día local (−840 a 840; Chile = −180 o −240) |
+
+Un valor inválido responde **422** `{"detail", "errores": {campo: mensaje}}` con todos los campos con error. Las
+fechas de la respuesta vienen en ISO 8601 UTC con `Z` (`2026-10-28T14:05:00Z`).
+
+La página `/historial` convierte los días locales del navegador a UTC: «Desde» es ese día a las 00:00 locales y
+«Hasta» es el **día siguiente** a las 00:00 locales (así incluye el día completo). Envía
+`tz_offset_min = -new Date().getTimezoneOffset()`. Por defecto muestra los últimos 7 días. Si el rango cruza un
+cambio de horario, la agrupación por día usa un solo desfase (puede correrse 1 h en ese día).
+
+**CSV** («Exportar a Excel»): UTF-8 con BOM, separador `;`, fin de línea CRLF. Columnas `Fecha (UTC)`
+(`AAAA-MM-DD hh:mm:ss`), Usuario, Correo, Portal y Resultado. Una celda que empieza con `=`, `+`, `-`, `@`, tabulador
+o retorno de carro lleva una `'` adelante (para que Excel no la ejecute como fórmula). El archivo se llama
+`historial_accesos_AAAAMMDD.csv` (fecha UTC). Si hay más de 50.000 filas, trae las más recientes y el header
+`X-Historial-Truncado: 50000`; la interfaz lo avisa.
 
 ## Cuentas de acceso en External ID
 
@@ -169,7 +228,8 @@ app/externalid.py Cuentas de acceso en External ID (msal + Graph /users)
 app/tools/        sync_externalid.py: sincronización inicial de cuentas (se ejecuta en local)
 app/docs/         Guía de ingreso en PDF (ya no se adjunta al correo)
 app/schemas.py    Validaciones de entrada
-app/static/       index.html, styles.css, app.js, logoMG.png (placeholder: reemplázalo por el logo real)
+app/static/       inicio.html (/), contactos.html + app.js (/contactos), historial.html + historial.js (/historial),
+                  comun.js (API, avisos y encabezado de inicio e historial), styles.css, logoMG.png
 app/templates/    Páginas "Ingresa desde el Portal Corporativo" y "No tienes permisos"
 tests/            pytest (BD, Graph y External ID simulados)
 ```
@@ -249,7 +309,7 @@ Luego usa `SQL_USER=mira_admin_app` y esa clave en el Container App.
 | Suscripción | CreditosCopilot1 (`38b3f030-c7b5-4d38-822b-c533f88cd34a`) |
 | Container App | `ca-mira-admin` en `RG-COPILOT-DEV`, East US |
 | Environment (reutilizado) | `managedEnvironment-rgscripth25prod-818f` (`rg-script-h25-prod`, East US) |
-| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v3` |
+| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v7` (revisión `ca-mira-admin--0000009`, 2026-10-28) |
 | Recursos | 0.25 vCPU, 0.5 GiB, réplicas mín. 0 / máx. 1, ingress externo solo HTTPS (HTTP redirige) |
 | Pull de la imagen | Usuario admin del ACR (guardado como secret del Container App). Con rol Contributor no se puede asignar `AcrPull` a una identidad administrada |
 | Secrets | `sql-password`, `session-secret`, `graph-client-secret` (secreto de la app "Portal Externo - Envio de correos"), `extid-client-secret` (secreto de la app de External ID) |

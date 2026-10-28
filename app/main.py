@@ -1,14 +1,17 @@
 """App FastAPI: middlewares de sesión y seguridad, rutas de autenticación, API y archivos estáticos."""
 
+import csv
+import io
 import logging
+from datetime import datetime, timezone
 from html import escape
 from http import HTTPStatus
 from pathlib import Path
 
 import pyodbc
-from fastapi import Depends, FastAPI, Form, Request
+from fastapi import Depends, FastAPI, Form, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -63,7 +66,9 @@ def _leer_plantilla(ruta: Path) -> str:
     return ruta.read_text(encoding="utf-8").replace("{{PORTAL_URL}}", escape(settings.portal_base_url, quote=True))
 
 
-_INDEX_HTML = _leer_plantilla(STATIC_DIR / "index.html")
+_INICIO_HTML = _leer_plantilla(STATIC_DIR / "inicio.html")
+_CONTACTOS_HTML = _leer_plantilla(STATIC_DIR / "contactos.html")
+_HISTORIAL_HTML = _leer_plantilla(STATIC_DIR / "historial.html")
 _SIN_ACCESO_HTML = _leer_plantilla(TEMPLATES_DIR / "sin_acceso.html")
 _SIN_PERMISOS_HTML = _leer_plantilla(TEMPLATES_DIR / "sin_permisos.html")
 
@@ -127,6 +132,13 @@ class ErrorCampo(Exception):
         self.mensaje = mensaje
 
 
+class ErrorValidacion(Exception):
+    """Varios campos inválidos a la vez (422 con todos los errores)."""
+
+    def __init__(self, errores: dict[str, str]):
+        self.errores = errores
+
+
 _TRADUCCIONES = {
     404: "No encontrado.",
     405: "Método no permitido.",
@@ -165,6 +177,13 @@ async def _error_campo(request: Request, exc: ErrorCampo):
     return JSONResponse({"detail": exc.mensaje, "errores": {exc.campo: exc.mensaje}}, status_code=exc.status_code)
 
 
+@app.exception_handler(ErrorValidacion)
+async def _error_validacion_campos(request: Request, exc: ErrorValidacion):
+    return JSONResponse(
+        {"detail": next(iter(exc.errores.values()), "Datos inválidos."), "errores": exc.errores}, status_code=422
+    )
+
+
 @app.exception_handler(pyodbc.Error)
 async def _error_bd(request: Request, exc: pyodbc.Error):
     log.error("Error de base de datos en %s %s: %s", request.method, request.url.path, exc.args[:1])
@@ -189,10 +208,10 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/", response_class=HTMLResponse)
-def inicio(request: Request):
+def _pagina_protegida(request: Request, html: str) -> HTMLResponse:
+    """Con auth activa exige sesión y Portal3 = 1 y Activo = 1; con auth apagada sirve la página directo."""
     if not settings.auth_enabled:
-        return HTMLResponse(_INDEX_HTML)
+        return HTMLResponse(html)
     correo = request.state.correo
     if not correo:
         return _pagina_sin_acceso(MSG_SIN_SESION, 200)
@@ -203,7 +222,22 @@ def inicio(request: Request):
         return _pagina_sin_acceso(MSG_BD_NO_DISPONIBLE, 503)
     if not es_admin:
         return _pagina_sin_permisos()
-    return HTMLResponse(_INDEX_HTML)
+    return HTMLResponse(html)
+
+
+@app.get("/", response_class=HTMLResponse)
+def inicio(request: Request):
+    return _pagina_protegida(request, _INICIO_HTML)
+
+
+@app.get("/contactos", response_class=HTMLResponse)
+def contactos(request: Request):
+    return _pagina_protegida(request, _CONTACTOS_HTML)
+
+
+@app.get("/historial", response_class=HTMLResponse)
+def historial(request: Request):
+    return _pagina_protegida(request, _HISTORIAL_HTML)
 
 
 @app.post("/auth/portal")
@@ -392,3 +426,131 @@ def api_enviar_correo(usuario_id: int, admin: str | None = Depends(require_admin
         # El correo ya salió: se informa el éxito igual para no inducir un reenvío duplicado.
         log.error("El correo se envió, pero no se pudo marcar InvitacionEnviada: %s", e.args[:1])
     return {"correoEnviado": True, "mensaje": f"Correo enviado a {usuario['Correo']}."}
+
+
+# ---------------------------------------------------------------------------
+# Historial de accesos (solo lectura)
+# ---------------------------------------------------------------------------
+
+PORTALES_HISTORIAL = ("Energía", "MiraStock")
+RESULTADOS_HISTORIAL = ("OK", "Denegado")
+TAMANO_PAGINA_HISTORIAL = 50
+TOPE_CSV_HISTORIAL = 50_000
+
+
+def _valor_permitido(valor: str, permitidos: tuple[str, ...]) -> str | None:
+    """Devuelve el valor canónico (sin distinguir mayúsculas) o None si no está permitido."""
+    buscado = valor.strip().casefold()
+    return next((p for p in permitidos if p.casefold() == buscado), None)
+
+
+def _fecha_utc(texto: str) -> datetime | None:
+    """ISO 8601 a datetime UTC sin zona (la vista guarda UTC). Sin zona se asume UTC. None si no es válida."""
+    try:
+        fecha = datetime.fromisoformat(texto.strip())
+    except ValueError:
+        return None
+    if fecha.tzinfo is not None:
+        fecha = fecha.astimezone(timezone.utc).replace(tzinfo=None)
+    return fecha
+
+
+def _filtros_historial(
+    correo: str | None = None,
+    portal: str | None = None,
+    resultado: str | None = None,
+    desde: str | None = None,
+    hasta: str | None = None,
+) -> db.FiltrosHistorial:
+    errores: dict[str, str] = {}
+    correo = (correo or "").strip() or None
+    if correo and len(correo) > 256:
+        errores["correo"] = "El correo no puede superar los 256 caracteres."
+
+    portal_ok = None
+    if portal and portal.strip():
+        portal_ok = _valor_permitido(portal, PORTALES_HISTORIAL)
+        if portal_ok is None:
+            errores["portal"] = "El portal debe ser Energía o MiraStock."
+
+    resultado_ok = None
+    if resultado and resultado.strip():
+        resultado_ok = _valor_permitido(resultado, RESULTADOS_HISTORIAL)
+        if resultado_ok is None:
+            errores["resultado"] = "El resultado debe ser OK o Denegado."
+
+    fechas: dict[str, datetime | None] = {}
+    for campo, texto in (("desde", desde), ("hasta", hasta)):
+        fechas[campo] = None
+        if texto and texto.strip():
+            fechas[campo] = _fecha_utc(texto)
+            if fechas[campo] is None:
+                errores[campo] = "La fecha no tiene un formato válido (ISO 8601)."
+    if fechas["desde"] and fechas["hasta"] and fechas["desde"] >= fechas["hasta"]:
+        errores.setdefault("hasta", "La fecha «hasta» debe ser posterior a «desde».")
+
+    if errores:
+        raise ErrorValidacion(errores)
+    return db.FiltrosHistorial(correo, portal_ok, resultado_ok, fechas["desde"], fechas["hasta"])
+
+
+def _iso_utc(fecha: datetime | None) -> str | None:
+    # La vista declara Fecha como NULL-able (viene de una unión): una fila sin fecha no debe romper la respuesta.
+    return fecha.strftime("%Y-%m-%dT%H:%M:%SZ") if fecha else None
+
+
+def _celda_csv(valor: str) -> str:
+    """Neutraliza la inyección de fórmulas: Excel interpretaría = + - @ (y tab o CR) al inicio."""
+    return "'" + valor if valor and valor[0] in "=+-@\t\r" else valor
+
+
+# `admin` va primero: sin sesión responde 401 antes de validar los filtros.
+
+@app.get("/api/historial")
+def api_historial(
+    admin: str | None = Depends(require_admin),
+    filtros: db.FiltrosHistorial = Depends(_filtros_historial),
+    pagina: int = Query(1, ge=1, le=1_000_000),
+):
+    filas, total = db.listar_historial(filtros, pagina, TAMANO_PAGINA_HISTORIAL)
+    return {
+        "filas": [{**f, "Fecha": _iso_utc(f["Fecha"])} for f in filas],
+        "total": total,
+        "pagina": pagina,
+        "tamano": TAMANO_PAGINA_HISTORIAL,
+        "paginas": max(1, -(-total // TAMANO_PAGINA_HISTORIAL)),
+    }
+
+
+@app.get("/api/historial/resumen")
+def api_historial_resumen(
+    admin: str | None = Depends(require_admin),
+    filtros: db.FiltrosHistorial = Depends(_filtros_historial),
+    tz_offset_min: int = Query(0, ge=-840, le=840),
+):
+    return db.resumen_historial(filtros, tz_offset_min)
+
+
+@app.get("/api/historial/csv")
+def api_historial_csv(
+    admin: str | None = Depends(require_admin),
+    filtros: db.FiltrosHistorial = Depends(_filtros_historial),
+):
+    filas, total = db.listar_historial(filtros, 1, TOPE_CSV_HISTORIAL)
+    salida = io.StringIO()
+    # Separador ';' y BOM: Excel en español abre el archivo con columnas y acentos correctos.
+    escritor = csv.writer(salida, delimiter=";", lineterminator="\r\n")
+    escritor.writerow(["Fecha (UTC)", "Usuario", "Correo", "Portal", "Resultado"])
+    for f in filas:
+        escritor.writerow([
+            f["Fecha"].strftime("%Y-%m-%d %H:%M:%S") if f["Fecha"] else "",
+            *(_celda_csv(f[c] or "") for c in ("Usuario", "Correo", "Portal", "Resultado")),
+        ])
+    nombre = f"historial_accesos_{datetime.now(timezone.utc):%Y%m%d}.csv"
+    headers = {"Content-Disposition": f'attachment; filename="{nombre}"'}
+    if total > TOPE_CSV_HISTORIAL:
+        headers["X-Historial-Truncado"] = str(TOPE_CSV_HISTORIAL)
+    log.info("Historial exportado a CSV (%s de %s filas)", len(filas), total)
+    return Response(
+        ("\ufeff" + salida.getvalue()).encode("utf-8"), media_type="text/csv; charset=utf-8", headers=headers
+    )

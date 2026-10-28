@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Logs control de ingresos | MiraGroup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/comun.js" defer></script>
+  <script src="/static/historial.js" defer></script>
+</head>
+<body data-portal-url="{{PORTAL_URL}}">
+  <a class="saltar" href="#contenido">Saltar al contenido</a>
+
+  <header class="encabezado">
+    <div class="marca">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h1>Logs control de ingresos</h1>
+    </div>
+    <nav class="nav-inicio" aria-label="Navegación">
+      <a class="btn btn-fantasma" href="/">← Inicio</a>
+    </nav>
+    <div class="sesion">
+      <span class="admin-correo" id="admin-correo" aria-label="Administrador conectado"></span>
+      <a class="btn btn-secundario" href="{{PORTAL_URL}}">Volver al portal</a>
+      <button type="button" class="btn btn-fantasma" id="btn-logout">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <main id="contenido" class="contenido">
+    <form class="barra card" id="form-filtros" aria-label="Filtros" novalidate>
+      <div class="campo campo-buscar">
+        <label for="h-correo">Correo</label>
+        <input type="search" id="h-correo" maxlength="256" placeholder="Contiene…" autocomplete="off">
+      </div>
+      <div class="campo">
+        <label for="h-portal">Portal</label>
+        <select id="h-portal">
+          <option value="">Todos</option>
+          <option value="Energía">Energía</option>
+          <option value="MiraStock">MiraStock</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label for="h-resultado">Resultado</label>
+        <select id="h-resultado">
+          <option value="">Todos</option>
+          <option value="OK">OK</option>
+          <option value="Denegado">Denegado</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label for="h-desde">Desde</label>
+        <input type="date" id="h-desde" aria-describedby="e-fechas">
+      </div>
+      <div class="campo">
+        <label for="h-hasta">Hasta</label>
+        <input type="date" id="h-hasta" aria-describedby="e-fechas">
+      </div>
+      <div class="barra-acciones">
+        <button type="submit" class="btn btn-primario" id="btn-buscar">Buscar</button>
+        <button type="button" class="btn btn-secundario" id="btn-exportar">Exportar a Excel</button>
+      </div>
+      <p class="error-campo error-fechas" id="e-fechas" role="alert"></p>
+    </form>
+
+    <section class="indicadores" aria-label="Indicadores">
+      <div class="card indicador">
+        <span class="indicador-nombre">Total de accesos</span>
+        <span class="indicador-valor" id="i-total">—</span>
+      </div>
+      <div class="card indicador">
+        <span class="indicador-nombre">Usuarios únicos</span>
+        <span class="indicador-valor" id="i-unicos">—</span>
+      </div>
+      <div class="card indicador">
+        <span class="indicador-nombre">Accesos a Energía</span>
+        <span class="indicador-valor" id="i-energia">—</span>
+      </div>
+      <div class="card indicador">
+        <span class="indicador-nombre">Accesos a MiraStock</span>
+        <span class="indicador-valor" id="i-mirastock">—</span>
+      </div>
+      <div class="card indicador indicador-denegado">
+        <span class="indicador-nombre">Denegados</span>
+        <span class="indicador-valor" id="i-denegados">—</span>
+      </div>
+    </section>
+
+    <section class="card card-grafico" aria-labelledby="titulo-grafico">
+      <h2 id="titulo-grafico">Accesos por día</h2>
+      <div class="grafico" id="grafico" role="img" aria-label="Sin datos"></div>
+      <p class="grafico-vacio" id="grafico-vacio" hidden>No hay accesos en el período seleccionado.</p>
+    </section>
+
+    <section class="card card-tabla" aria-labelledby="titulo-tabla">
+      <h2 id="titulo-tabla" class="sr-only">Accesos</h2>
+      <p class="resumen" id="resumen" aria-live="polite"></p>
+
+      <div id="estado-carga" class="estado" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span>Cargando accesos…</span>
+      </div>
+      <div id="estado-vacio" class="estado" hidden>
+        <p>No hay accesos para los filtros seleccionados.</p>
+      </div>
+      <div id="estado-error" class="estado estado-error" role="alert" hidden>
+        <p id="texto-error">No se pudieron cargar los accesos.</p>
+        <button type="button" class="btn btn-secundario" id="btn-reintentar">Reintentar</button>
+      </div>
+
+      <table class="tabla" id="tabla" hidden>
+        <thead>
+          <tr>
+            <th scope="col">Fecha</th>
+            <th scope="col">Usuario</th>
+            <th scope="col">Correo</th>
+            <th scope="col">Portal</th>
+            <th scope="col">Resultado</th>
+          </tr>
+        </thead>
+        <tbody id="tabla-cuerpo"></tbody>
+      </table>
+
+      <nav class="paginacion" id="paginacion" aria-label="Paginación" hidden>
+        <button type="button" class="btn btn-fantasma btn-chico" id="btn-anterior">← Anterior</button>
+        <span id="texto-pagina" aria-live="polite"></span>
+        <button type="button" class="btn btn-fantasma btn-chico" id="btn-siguiente">Siguiente →</button>
+      </nav>
+    </section>
+  </main>
+
+  <!-- Pantalla de sesión vencida / sin permisos -->
+  <div class="bloqueo" id="bloqueo" hidden>
+    <div class="card card-aviso" role="alertdialog" aria-modal="true" aria-labelledby="bloqueo-titulo" aria-describedby="bloqueo-texto">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h2 id="bloqueo-titulo">Tu sesión venció</h2>
+      <p id="bloqueo-texto">Vuelve a ingresar desde el Portal Corporativo.</p>
+      <a class="btn btn-primario" href="{{PORTAL_URL}}" id="bloqueo-link">Ir al Portal Corporativo</a>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>
