@@ -8,10 +8,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
 
-## Current status (as of 2026-10-29; v8 deployed, v9 coded but NOT deployed)
+## Current status (as of 2026-10-29; v9 deployed that day)
 
-### v9 (2026-10-29): explicit session close (`"cierre": true` in `/api/latido`) — CODED, NOT DEPLOYED
-- **365 tests pass** (42 new). JS checked with esprima. Build and deploy wait for the user's OK. Not reviewed in a browser.
+### v9 (2026-10-29): explicit session close (`"cierre": true` in `/api/latido`) — DEPLOYED
+- **365 tests pass** (42 new). JS checked with esprima. The user skipped the browser review.
+- Commit `a31cf3e` holds v8 + v9 together. They could not be split cleanly because v9 edited the same files. `body.json` is still untracked.
+- The user ran `cierre_sesion.sql`: the `CierreExplicito` columns and the view are in production.
+- Deployed on 2026-10-29 (~19:55 UTC) as revision `--0000011`. Checks after the deploy:
+  - `/health` returned 200, and startup was clean.
+  - v9 has 100% of the traffic.
+  - `/api/latido` returned 400 for an empty body and for `"cierre":1`.
+  - `/historial` serves `?v=9` and the «Cierre» column.
+  - The access log showed `/health` and `/historial` but not the `/api/latido` POSTs, so the filter works in production.
+- Not verified against the real DB: a real close or heartbeat, including the Energía `UPDATE ... OUTPUT INTO` batch. That branch first runs with the next real Energía heartbeat.
 - Done by the user (Claude must not touch them):
   - `CierreExplicito BIT NULL DEFAULT 0` in `core.HistorialAccesos` and `core.SesionesAgente`.
   - The view returns `CierreExplicito` (last column), and `EnCurso` is 0 when it is 1.
@@ -71,7 +80,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `Fecha` and `Correo` are nullable in the view. The API returns `null` for them and the CSV leaves the cell empty.
 
 ### Next session: start here
-0. **v8 heartbeats:** ask the user whether the Power Pages JS (Energía and MiraStock) is published. Then check in `/historial` that `FinalSesion` / «Tiempo de sesión» fill in. A Log Analytics query for errors on `/api/latido` is possible: the app logs only errors there, never the key or token, and the access log excludes the route. Each query needs the user's OK.
+0. **v8/v9 heartbeats:** ask the user whether the Power Pages JS (Energía and MiraStock) is published. Then check in `/historial` that `FinalSesion` / «Tiempo de sesión» fill in and that a MiraStock «Atrás» / «Cerrar sesión» shows «Botón» in «Cierre». A Log Analytics query for errors on `/api/latido` is possible: the app logs only errors there, never the key or token, and the access log excludes the route. Each query needs the user's OK.
 1. **Ask the user** whether the welcome emails for Id 55 and 56 arrived and whether code-only sign-in worked for them. Not verified by Claude.
 2. **Sync** (`python -m app.tools.sync_externalid`): there is no evidence it was ever run.
    - It is safe now: the v6 External ID logic is unchanged in v7, locally and in Azure.
@@ -81,7 +90,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Deployment
 - URL: https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io
 - Revision mode `Single`: traffic follows the latest revision, and no older one is kept for rollback.
-- **Running: image v8, revision `ca-mira-admin--0000010`, with `AUTH_ENABLED=false`, `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~18:37 UTC on 2026-10-29. `/health` is OK and startup was clean. It is the only active revision, with 100% of the traffic. `ENERGIA_PORTAL_URL` and `LATIDO_ORIGINS` are not set in Azure, so the code defaults apply. The next image is **v9**.
+- **Running: image v9, revision `ca-mira-admin--0000011`, with `AUTH_ENABLED=false`, `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~19:55 UTC on 2026-10-29. `/health` is OK and startup was clean. It has 100% of the traffic; `--0000010` (v8) was still active with 0% right after the deploy (Single mode deactivates it). `ENERGIA_PORTAL_URL` and `LATIDO_ORIGINS` are not set in Azure, so the code defaults apply. The next image is **v10**.
 - Image history:
   - v3: auth off.
   - v4: External ID + PDF attachment.
@@ -89,6 +98,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - v6: federated/mail accounts + 409 for legacy accounts (`--0000007` with External ID off, `--0000008` with it on).
   - v7: home page + `/contactos` + `/historial` (read-only access log) (`--0000009`).
   - v8: session heartbeats `POST /api/latido` + session time in `/historial` + `?v=8` cache busting (`--0000010`).
+  - v9: explicit close (`"cierre": true`), «Cierre» column + «Cerradas con botón» indicator, `?v=9` (`--0000011`).
 - **az CLI** is logged in to both tenants (`e3112796-…` workforce/subscription, `cb938793-…` External ID), and the active one can switch. Before az commands on Azure resources, run `az account set --subscription 38b3f030-c7b5-4d38-822b-c533f88cd34a`.
 - Logs older than the current replica (it scales to 0): Log Analytics workspace `d8a192a1-91f6-4add-882c-d1396d044ba0`, table `ContainerAppConsoleLogs_CL`, via `az monitor log-analytics query`. The app logs the user Id and the External ID account id, never the email.
 
@@ -245,7 +255,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - It swaps `app.db` and `mailer.enviar_bienvenida` for in-memory fakes and signs tokens with throwaway RSA keys.
   - The TestClient uses `https://testserver`. Cookies set manually need `domain="testserver.local"`.
 - JS syntax check: there is no Node on this machine. Use esprima from a scratch target dir: `pip install --target <dir> esprima==4.0.1`, then `esprima.parseScript(...)`.
-- Deploy a new version (always a new tag; v9 is next and already uses `?v=9`; bump `?v=` in the HTML if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
+- Deploy a new version (always a new tag; v10 is next; bump `?v=` in the HTML, now `?v=9`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
 - Azure layout:
   - `ca-mira-admin` is in `RG-COPILOT-DEV`, East US, with 0.25 vCPU, 0.5 Gi and 0–1 replicas.
   - It reuses environment `managedEnvironment-rgscripth25prod-818f` and ACR `acrscripth25prod`, both in `rg-script-h25-prod`.
