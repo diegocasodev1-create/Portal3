@@ -635,3 +635,176 @@ def test_cierre_error_de_bd_503(cliente, monkeypatch):
 
     monkeypatch.setattr(db, "cierre_mirastock", falla)
     assert latir(cliente, cierre_mirastock()).status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Energía por llave (v10): {"tipo": "energia", "t": <guid>}
+# ---------------------------------------------------------------------------
+
+def energia_llave(llave=LLAVE, **extra):
+    return {"tipo": "energia", "t": llave, **extra}
+
+
+def fila_llave(bd, hace_min=10, final_sesion=None, **kwargs):
+    kwargs.setdefault("token", LLAVE)
+    return bd.agregar_fila_acceso(CORREO, bd.ahora - timedelta(minutes=hace_min), final_sesion, **kwargs)
+
+
+def test_energia_llave_actualiza_final_de_sesion(cliente, bd):
+    fila = fila_llave(bd)
+    resp = latir(cliente, energia_llave())
+    assert resp.status_code == 204 and resp.content == b""
+    assert fila["FinalSesion"] == bd.ahora and fila["CierreExplicito"] is False
+    assert bd.llamadas_latido == [("energia_llave", LLAVE)]
+
+
+def test_energia_llave_cierre_por_sendbeacon_text_plain(cliente, bd):
+    fila = fila_llave(bd)
+    resp = cliente.post(RUTA, content=json.dumps(energia_llave(cierre=True)),
+                        headers={"Content-Type": "text/plain;charset=UTF-8", "Origin": ORIGEN_ENERGIA})
+    assert resp.status_code == 204
+    assert resp.headers["access-control-allow-origin"] == ORIGEN_ENERGIA
+    assert fila["CierreExplicito"] is True
+
+
+def test_energia_llave_guid_se_normaliza(cliente, bd):
+    assert latir(cliente, energia_llave("{" + LLAVE.upper() + "}")).status_code == 204
+    assert bd.llamadas_latido == [("energia_llave", LLAVE)]
+
+
+@pytest.mark.parametrize("hace_s, actualiza", [(30, False), (59, False), (61, True), (600, True)])
+def test_energia_llave_regla_de_60_segundos(cliente, bd, hace_s, actualiza):
+    anterior = bd.ahora - timedelta(seconds=hace_s)
+    fila = fila_llave(bd, final_sesion=anterior)
+    assert latir(cliente, energia_llave()).status_code == 204
+    assert fila["FinalSesion"] == (bd.ahora if actualiza else anterior)
+
+
+def test_energia_llave_no_toca_sesion_cerrada(cliente, bd):
+    cerrada = bd.ahora - timedelta(minutes=5)
+    fila = fila_llave(bd, final_sesion=cerrada, cierre=True)
+    assert latir(cliente, energia_llave()).status_code == 204
+    assert latir(cliente, energia_llave(cierre=True)).status_code == 204
+    assert fila["FinalSesion"] == cerrada and len(bd.accesos) == 1
+
+
+def test_energia_llave_sin_fila_no_inserta(cliente, bd):
+    assert latir(cliente, energia_llave()).status_code == 204
+    assert latir(cliente, energia_llave(cierre=True)).status_code == 204
+    assert bd.accesos == []
+
+
+def test_energia_llave_no_toca_filas_sin_llave_del_mismo_correo(cliente, bd):
+    # Con «t» solo cuenta la llave: un ingreso reciente sin llave (modo token) no se toca ni se inserta otro.
+    otra = bd.agregar_fila_acceso(CORREO, bd.ahora - timedelta(minutes=5))
+    latir(cliente, energia_llave())
+    assert bd.accesos == [otra] and otra["FinalSesion"] is None
+
+
+@pytest.mark.parametrize("cambio", [
+    {"hace_min": 12 * 60 + 1},                          # creada hace más de 12 h
+    {"portal": "MiraStock"},
+    {"resultado": "Denegado"},
+    {"token": "00000000-0000-0000-0000-000000000000"},  # otra llave
+])
+def test_energia_llave_ignora_filas_que_no_corresponden(cliente, bd, cambio):
+    fila = fila_llave(bd, **cambio)
+    latir(cliente, energia_llave())
+    latir(cliente, energia_llave(cierre=True))
+    assert fila["FinalSesion"] is None and fila["CierreExplicito"] is False
+
+
+def test_energia_llave_cierre_sin_regla_de_60_segundos(cliente, bd):
+    fila = fila_llave(bd, final_sesion=bd.ahora - timedelta(seconds=10))
+    assert latir(cliente, energia_llave(cierre=True)).status_code == 204
+    assert fila["FinalSesion"] == bd.ahora and fila["CierreExplicito"] is True
+    assert bd.llamadas_latido == [("cierre_energia_llave", LLAVE)]
+
+
+def test_energia_llave_latido_despues_del_cierre_no_cambia_final(cliente, bd):
+    fila = fila_llave(bd)
+    latir(cliente, energia_llave(cierre=True))
+    cerrada = bd.ahora
+    bd.ahora += timedelta(minutes=5)
+    latir(cliente, energia_llave())
+    assert fila["FinalSesion"] == cerrada and len(bd.accesos) == 1
+
+
+@pytest.mark.parametrize("llave", ["", "abc", LLAVE + "0", 123, None, [LLAVE], {"a": 1}])
+def test_energia_llave_invalida_400(cliente, bd, llave):
+    resp = latir(cliente, energia_llave(llave))
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "La llave de sesión no es válida."}
+    assert bd.llamadas_latido == []
+
+
+@pytest.mark.parametrize("cuerpo", [
+    {"tipo": "energia", "t": LLAVE, "token": "x"},
+    {"tipo": "energia", "t": LLAVE, "token": None},
+    {"tipo": "energia"},
+    {"tipo": "energia", "cierre": True},
+])
+def test_energia_llave_y_token_juntos_o_ninguno_400(cliente, bd, cuerpo):
+    resp = latir(cliente, cuerpo)
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "Envía la llave (t) o el token, no ambos."}
+    assert bd.llamadas_latido == []
+
+
+def test_energia_llave_cierre_de_tipo_invalido_400(cliente, bd):
+    resp = latir(cliente, energia_llave(cierre=1))
+    assert resp.status_code == 400 and bd.llamadas_latido == []
+
+
+def test_energia_modo_token_sigue_igual(cliente, bd):
+    assert latir(cliente, energia()).status_code == 204
+    assert latir(cliente, cierre_energia()).status_code == 204
+    assert bd.llamadas_latido == [("energia", CORREO), ("cierre_energia", CORREO)]
+
+
+def test_energia_llave_error_de_bd_503(cliente, monkeypatch):
+    def falla(llave):
+        raise pyodbc.OperationalError("08S01", "Sin conexión")
+
+    monkeypatch.setattr(db, "latido_energia_llave", falla)
+    assert latir(cliente, energia_llave()).status_code == 503
+
+
+def test_energia_llave_no_va_al_log(cliente, bd, caplog, monkeypatch):
+    caplog.set_level(logging.DEBUG)
+    latir(cliente, energia_llave())
+
+    def falla(llave):
+        raise pyodbc.OperationalError("08S01", "Sin conexión")
+
+    monkeypatch.setattr(db, "cierre_energia_llave", falla)
+    latir(cliente, energia_llave(cierre=True))
+    texto = caplog.text + " ".join(str(r.args) for r in caplog.records)
+    assert LLAVE not in texto
+
+
+@pytest.mark.parametrize("rowcount, esperado", [(1, True), (0, False)])
+def test_db_latido_energia_llave_sql(cursor_latido, rowcount, esperado):
+    cursor_latido["cursor"] = cur = CursorLatido(rowcount=rowcount)
+    assert db.latido_energia_llave(LLAVE) is esperado
+    [(sql, params)] = cur.ejecutados
+    assert params == (LLAVE,) and sql.count("?") == 1
+    assert sql.startswith("UPDATE core.HistorialAccesos SET FinalSesion = SYSUTCDATETIME()")
+    assert ("WHERE Token = ? AND Portal = N'Energía' AND Resultado = N'OK'"
+            " AND Fecha >= DATEADD(HOUR, -12, SYSUTCDATETIME())") in sql
+    assert "AND COALESCE(CierreExplicito, 0) = 0" in sql
+    assert "(FinalSesion IS NULL OR FinalSesion < DATEADD(SECOND, -60, SYSUTCDATETIME()))" in sql
+    assert "CierreExplicito = 1" not in sql and "INSERT" not in sql
+
+
+@pytest.mark.parametrize("rowcount, esperado", [(1, True), (0, False)])
+def test_db_cierre_energia_llave_sql(cursor_latido, rowcount, esperado):
+    cursor_latido["cursor"] = cur = CursorLatido(rowcount=rowcount)
+    assert db.cierre_energia_llave(LLAVE) is esperado
+    [(sql, params)] = cur.ejecutados
+    assert params == (LLAVE,) and sql.count("?") == 1
+    assert sql.startswith("UPDATE core.HistorialAccesos SET FinalSesion = SYSUTCDATETIME(), CierreExplicito = 1")
+    assert ("WHERE Token = ? AND Portal = N'Energía' AND Resultado = N'OK'"
+            " AND Fecha >= DATEADD(HOUR, -12, SYSUTCDATETIME())"
+            " AND COALESCE(CierreExplicito, 0) = 0") in sql
+    assert "SECOND, -60" not in sql and "INSERT" not in sql

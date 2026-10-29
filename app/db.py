@@ -249,6 +249,24 @@ _SQL_CIERRE_ENERGIA = _SQL_ENERGIA_INICIO + (
     " SELECT CAST(CASE WHEN EXISTS (SELECT 1 FROM @previa WHERE Cerrada = 0) THEN 1 ELSE 0 END AS BIT);"
 )
 
+# Energía por llave (v10): la fila la crea el flujo ConsultarAccesoPortal al hacer clic en la card, con la llave
+# en Token. Estos UPDATE nunca insertan.
+_SQL_LATIDO_ENERGIA_LLAVE = (
+    "UPDATE core.HistorialAccesos SET FinalSesion = SYSUTCDATETIME()"
+    " WHERE Token = ? AND Portal = N'Energía' AND Resultado = N'OK'"
+    " AND Fecha >= DATEADD(HOUR, -12, SYSUTCDATETIME())"
+    " AND COALESCE(CierreExplicito, 0) = 0"
+    " AND (FinalSesion IS NULL OR FinalSesion < DATEADD(SECOND, -60, SYSUTCDATETIME()))"
+)
+
+# Cierre por llave: sin la regla de 60 s.
+_SQL_CIERRE_ENERGIA_LLAVE = (
+    "UPDATE core.HistorialAccesos SET FinalSesion = SYSUTCDATETIME(), CierreExplicito = 1"
+    " WHERE Token = ? AND Portal = N'Energía' AND Resultado = N'OK'"
+    " AND Fecha >= DATEADD(HOUR, -12, SYSUTCDATETIME())"
+    " AND COALESCE(CierreExplicito, 0) = 0"
+)
+
 
 def latido_mirastock(token: str) -> bool:
     """Marca FinalSesion de la llave de MiraStock (aunque ya pasó su ExpiraEn). True si actualizó una fila."""
@@ -280,6 +298,22 @@ def cierre_energia(correo: str) -> bool:
         cur = conn.cursor()
         cur.execute(_SQL_CIERRE_ENERGIA, correo)
         return bool(cur.fetchone()[0])
+
+
+def latido_energia_llave(llave: str) -> bool:
+    """Marca FinalSesion de la fila de Energía con esa llave (de las últimas 12 h). True si actualizó una fila."""
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(_SQL_LATIDO_ENERGIA_LLAVE, llave)
+        return cur.rowcount > 0
+
+
+def cierre_energia_llave(llave: str) -> bool:
+    """Cierra la sesión de Energía con esa llave si está abierta. True si cerró una."""
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(_SQL_CIERRE_ENERGIA_LLAVE, llave)
+        return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------------------

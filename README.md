@@ -241,7 +241,9 @@ usuario, no esta app.
 
 - **Body:** JSON de hasta 8 KB, con `Content-Type: application/json` o `text/plain` (para `navigator.sendBeacon`).
   - MiraStock: `{"tipo": "mirastock", "t": "<guid de core.SesionesAgente.Token>"}`
-  - Energía: `{"tipo": "energia", "token": "<token de /_services/auth/token del sitio Energía>"}`
+  - Energía (desde v10): `{"tipo": "energia", "t": "<guid de core.HistorialAccesos.Token>"}`
+  - Energía (modo anterior, sigue aceptado): `{"tipo": "energia", "token": "<token de /_services/auth/token del sitio
+    Energía>"}`. Hay que mandar `t` o `token`: los dos juntos, o ninguno, → 400.
   - Campo opcional `"cierre": true` en los dos: el usuario cerró con «Atrás» o «Cerrar sesión» (MiraStock lo manda
     con `sendBeacon`). Si falta o es `false`, es un latido normal; cualquier otro valor (`null`, `"true"`, `1`…) → 400.
 - **MiraStock:** `UPDATE core.SesionesAgente SET FinalSesion = SYSUTCDATETIME()` de esa llave si se creó hace menos
@@ -250,7 +252,12 @@ usuario, no esta app.
 - **MiraStock con cierre:** sin la regla de 60 s, pone `FinalSesion = SYSUTCDATETIME()`, `CierreExplicito = 1` y
   adelanta `ExpiraEn` a ahora si estaba en el futuro: la llave queda anulada y el agente ya no la acepta. Una sesión ya
   cerrada no se vuelve a cerrar.
-- **Energía:** el token se valida como en `/auth/portal` (RS256, `exp`, emisor), pero con la clave pública de
+- **Energía por llave (`t`, v10):** el flujo `ConsultarAccesoPortal` guarda en `Token` la llave que genera la card
+  de Energía, en el mismo INSERT de la fila. El latido hace `UPDATE core.HistorialAccesos SET FinalSesion =
+  SYSUTCDATETIME()` de la fila con esa llave, `Portal = 'Energía'`, `Resultado = 'OK'`, `Fecha` de las últimas 12 h
+  y no cerrada, con la regla de 60 s. El cierre pone además `CierreExplicito = 1`, sin la regla de 60 s. Con `t`
+  nunca se insertan filas: si no hay fila con esa llave, no hace nada.
+- **Energía por token:** el token se valida como en `/auth/portal` (RS256, `exp`, emisor), pero con la clave pública de
   `ENERGIA_PORTAL_URL` (cacheada aparte) y sin `TOKEN_AUDIENCE`. Con el correo del token, en una sola transacción
   con `UPDLOCK, HOLDLOCK`:
   - toma la fila **más reciente** de `core.HistorialAccesos` de ese correo, `Portal = 'Energía'`,
@@ -259,7 +266,7 @@ usuario, no esta app.
   - si está cerrada con botón hace 60 s o más, o no hay fila (entró directo por URL o volvió después de 30
     minutos), inserta una fila `OK` con `Fecha = FinalSesion = SYSUTCDATETIME()`;
   - si se cerró hace menos de 60 s, ignora el latido (uno que venía en camino al momento del cierre).
-- **Energía con cierre:** si esa fila más reciente está abierta, pone `FinalSesion = SYSUTCDATETIME()` y
+- **Energía por token con cierre:** si esa fila más reciente está abierta, pone `FinalSesion = SYSUTCDATETIME()` y
   `CierreExplicito = 1`. Si ya estaba cerrada o no hay fila, no hace nada (nunca inserta).
 - **Regla de 60 s:** si el latido anterior llegó hace menos de 60 segundos, `FinalSesion` no se reescribe (no aplica
   al cierre).

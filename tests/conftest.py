@@ -161,11 +161,14 @@ class BDFalsa:
             "FinalSesion": final_sesion, "CierreExplicito": cierre,
         }
 
-    def agregar_fila_acceso(self, correo, fecha, final_sesion=None, portal="Energía", resultado="OK", cierre=False):
+    def agregar_fila_acceso(self, correo, fecha, final_sesion=None, portal="Energía", resultado="OK", cierre=False,
+                            token=None):
         fila = {
             "Correo": correo, "Portal": portal, "Resultado": resultado, "Fecha": fecha,
             "FinalSesion": final_sesion, "CierreExplicito": cierre,
         }
+        if token is not None:
+            fila["Token"] = token
         self.accesos.append(fila)
         return fila
 
@@ -228,6 +231,31 @@ class BDFalsa:
         ultima["CierreExplicito"] = True
         return True
 
+    def _fila_energia_llave(self, llave):
+        """Fila OK de Energía con esa llave, de las últimas 12 h y abierta (como el WHERE del SQL)."""
+        for f in self.accesos:
+            if (f.get("Token") == llave and f["Portal"] == "Energía" and f["Resultado"] == "OK"
+                    and f["Fecha"] >= self.ahora - timedelta(hours=12) and not f["CierreExplicito"]):
+                return f
+        return None
+
+    def latido_energia_llave(self, llave):
+        self.llamadas_latido.append(("energia_llave", llave))
+        f = self._fila_energia_llave(llave)
+        if not f or (f["FinalSesion"] is not None and f["FinalSesion"] >= self.ahora - timedelta(seconds=60)):
+            return False
+        f["FinalSesion"] = self.ahora
+        return True
+
+    def cierre_energia_llave(self, llave):
+        self.llamadas_latido.append(("cierre_energia_llave", llave))
+        f = self._fila_energia_llave(llave)
+        if not f:
+            return False
+        f["FinalSesion"] = self.ahora
+        f["CierreExplicito"] = True
+        return True
+
     def _filtrar_historial(self, f):
         filas = self.historial
         if f.correo:
@@ -281,6 +309,7 @@ def bd(monkeypatch):
         "crear_usuario", "actualizar_usuario", "eliminar_usuario", "marcar_invitacion_enviada",
         "listar_usuarios_con_acceso", "listar_historial", "resumen_historial",
         "latido_mirastock", "latido_energia", "cierre_mirastock", "cierre_energia",
+        "latido_energia_llave", "cierre_energia_llave",
     ):
         monkeypatch.setattr(db, nombre, getattr(falsa, nombre))
     return falsa

@@ -516,6 +516,18 @@ async def _cuerpo_latido(request: Request) -> dict:
     return datos
 
 
+def _llave_latido(datos: dict) -> str:
+    """GUID de «t» normalizado (minúsculas, con guiones). 400 si no es válido."""
+    llave = datos.get("t")
+    try:
+        llave = str(uuid.UUID(llave)) if isinstance(llave, str) else None
+    except ValueError:
+        llave = None
+    if llave is None:
+        raise _latido_invalido("La llave de sesión no es válida.")
+    return llave
+
+
 @app.post(RUTA_LATIDO, status_code=204)
 async def api_latido(request: Request):
     """Registra que la sesión sigue activa. Responde 204 aunque no actualice nada (no revela si la llave existe).
@@ -530,17 +542,18 @@ async def api_latido(request: Request):
         raise _latido_invalido("El campo «cierre» debe ser true o false.")
 
     if tipo == "mirastock":
-        llave = datos.get("t")
-        try:
-            llave = str(uuid.UUID(llave)) if isinstance(llave, str) else None
-        except ValueError:
-            llave = None
-        if llave is None:
-            raise _latido_invalido("La llave de sesión no es válida.")
+        llave = _llave_latido(datos)
         await run_in_threadpool(db.cierre_mirastock if cierre else db.latido_mirastock, llave)
         return Response(status_code=204)
 
     if tipo == "energia":
+        # v10: el Header de Energía manda la llave «t» que guardó el flujo; «token» (v8/v9) sigue funcionando.
+        if ("t" in datos) == ("token" in datos):
+            raise _latido_invalido("Envía la llave (t) o el token, no ambos.")
+        if "t" in datos:
+            llave = _llave_latido(datos)
+            await run_in_threadpool(db.cierre_energia_llave if cierre else db.latido_energia_llave, llave)
+            return Response(status_code=204)
         token = datos.get("token")
         if not isinstance(token, str) or not token.strip():
             raise _latido_invalido("Falta el token de sesión.")
