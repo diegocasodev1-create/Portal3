@@ -39,6 +39,22 @@
     return `${dos(f.getDate())}/${dos(f.getMonth() + 1)}/${f.getFullYear()} ${dos(f.getHours())}:${dos(f.getMinutes())}`;
   }
 
+  // Duración en segundos → «< 1 min», «44 min» o «1 h 05 min» (minutos truncados).
+  function duracion(segundos) {
+    if (segundos === null || segundos === undefined) return "—";
+    if (segundos < 60) return "< 1 min";
+    const minutos = Math.floor(segundos / 60);
+    if (minutos < 60) return `${minutos} min`;
+    return `${numero.format(Math.floor(minutos / 60))} h ${dos(minutos % 60)} min`;
+  }
+
+  // Cómo terminó la sesión (los mismos textos que la columna «Cierre» del CSV).
+  function textoCierre(a) {
+    if (a.CierreExplicito) return "Botón";
+    if (a.EnCurso) return "En curso";
+    return a.FinalSesion ? "Inactividad" : "—";
+  }
+
   function diaCorto(valor) {
     const [, m, d] = valor.split("-");
     return `${d}/${m}`;
@@ -110,7 +126,9 @@
   // -------------------------------------------------------------------------
 
   function limpiarIndicadores() {
-    for (const id of ["i-total", "i-unicos", "i-energia", "i-mirastock", "i-denegados"]) $(id).textContent = "—";
+    const ids = ["i-total", "i-unicos", "i-energia", "i-mirastock", "i-denegados",
+      "i-promedio", "i-tiempo-energia", "i-tiempo-mirastock", "i-en-curso", "i-cerradas-boton"];
+    for (const id of ids) $(id).textContent = "—";
     $("grafico").replaceChildren();
     $("grafico").setAttribute("aria-label", "Sin datos");
     $("grafico-vacio").hidden = true;
@@ -137,6 +155,11 @@
     $("i-energia").textContent = numero.format(r.porPortal["Energía"] || 0);
     $("i-mirastock").textContent = numero.format(r.porPortal.MiraStock || 0);
     $("i-denegados").textContent = numero.format(r.denegados);
+    $("i-promedio").textContent = duracion(r.tiempoPromedioSeg);
+    $("i-tiempo-energia").textContent = duracion(r.tiempoTotalSeg["Energía"] || 0);
+    $("i-tiempo-mirastock").textContent = duracion(r.tiempoTotalSeg.MiraStock || 0);
+    $("i-en-curso").textContent = numero.format(r.enCurso);
+    $("i-cerradas-boton").textContent = numero.format(r.cerradasBoton);
     dibujarGrafico(r.porDia, r.total);
   }
 
@@ -199,6 +222,11 @@
       el("td", { "data-label": "Portal", text: a.Portal }),
       el("td", { "data-label": "Resultado" },
         el("span", { class: `chip ${ok ? "chip-ok" : "chip-denegado"}`, text: a.Resultado })),
+      a.EnCurso
+        ? el("td", { "data-label": "Final de sesión" }, el("span", { class: "chip chip-en-curso", text: "En curso" }))
+        : el("td", { "data-label": "Final de sesión", text: fechaLocal(a.FinalSesion) }),
+      el("td", { class: "td-tiempo", "data-label": "Tiempo de sesión", text: duracion(a.TiempoSesionSeg) }),
+      el("td", { "data-label": "Cierre", text: textoCierre(a) }),
     ]);
   }
 

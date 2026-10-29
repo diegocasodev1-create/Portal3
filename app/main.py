@@ -2,7 +2,9 @@
 
 import csv
 import io
+import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from html import escape
 from http import HTTPStatus
@@ -13,6 +15,7 @@ from fastapi import Depends, FastAPI, Form, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import auth, db, externalid, mailer
@@ -30,6 +33,20 @@ logging.basicConfig(
 for _ruidoso in ("msal", "httpx", "httpcore", "urllib3"):
     logging.getLogger(_ruidoso).setLevel(logging.WARNING)
 log = logging.getLogger("mira_admin")
+
+RUTA_LATIDO = "/api/latido"
+
+
+class _SinLatidos(logging.Filter):
+    """Saca /api/latido del access log de uvicorn: llega cada 2 minutos por usuario y llenaría Log Analytics."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Formato de uvicorn.access: (cliente, método, ruta con query, versión HTTP, status).
+        args = record.args
+        return not (isinstance(args, tuple) and len(args) >= 3 and str(args[2]).startswith(RUTA_LATIDO))
+
+
+logging.getLogger("uvicorn.access").addFilter(_SinLatidos())
 if not settings.auth_enabled:
     log.warning("AUTH_ENABLED=false: la app no pide ingreso y /api/* no exige sesión.")
 
@@ -87,7 +104,9 @@ def _pagina_sin_permisos() -> HTMLResponse:
 
 @app.middleware("http")
 async def proteccion_csrf(request: Request, call_next):
-    if request.url.path.startswith("/api/") and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+    # /api/latido llega desde otros sitios, no usa cookies y lleva su autorización en el body (llave o token).
+    path = request.url.path
+    if path.startswith("/api/") and path != RUTA_LATIDO and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         tipo = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if tipo != "application/json" or request.headers.get("x-requested-with") != "mira-admin":
             return JSONResponse({"detail": "Solicitud rechazada por seguridad."}, status_code=403)
@@ -105,6 +124,37 @@ async def sesion(request: Request, call_next):
     path = request.url.path
     if correo and not path.startswith(("/auth/", "/static/")) and response.status_code not in (401, 403):
         auth.crear_cookie_sesion(response, correo)
+    return response
+
+
+@app.middleware("http")
+async def cors_latido(request: Request, call_next):
+    """CORS solo para /api/latido (orígenes de LATIDO_ORIGINS, solo POST, sin credenciales)."""
+    if request.url.path != RUTA_LATIDO:
+        return await call_next(request)
+    origen = request.headers.get("origin")
+    permitido = origen is not None and origen.strip().rstrip("/").lower() in settings.latido_origenes
+
+    if request.method == "OPTIONS":
+        if not permitido or request.headers.get("access-control-request-method", "").upper() != "POST":
+            return Response(status_code=403, headers={"Vary": "Origin"})
+        return Response(
+            status_code=204,
+            headers={
+                "Access-Control-Allow-Origin": origen,
+                "Access-Control-Allow-Methods": "POST",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Max-Age": "600",
+                "Vary": "Origin",
+            },
+        )
+    # Sin Origin (llamadas de servidor) se procesa; con un Origin no permitido se rechaza.
+    if origen is not None and not permitido:
+        return JSONResponse({"detail": "Origen no permitido."}, status_code=403, headers={"Vary": "Origin"})
+    response = await call_next(request)
+    if permitido:
+        response.headers["Access-Control-Allow-Origin"] = origen
+        response.headers["Vary"] = "Origin"
     return response
 
 
@@ -429,6 +479,87 @@ def api_enviar_correo(usuario_id: int, admin: str | None = Depends(require_admin
 
 
 # ---------------------------------------------------------------------------
+# Latidos de sesión (público: los envían los JS de Energía y MiraStock)
+# ---------------------------------------------------------------------------
+
+TAMANO_MAX_LATIDO = 8 * 1024
+# text/plain permite navigator.sendBeacon al cerrar la pestaña; el body igual debe ser JSON.
+_TIPOS_LATIDO = {"application/json", "text/plain"}
+
+
+def _latido_invalido(detalle: str) -> StarletteHTTPException:
+    return StarletteHTTPException(status_code=400, detail=detalle)
+
+
+async def _cuerpo_latido(request: Request) -> dict:
+    tipo = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if tipo not in _TIPOS_LATIDO:
+        raise _latido_invalido("El cuerpo debe ser JSON.")
+    try:
+        largo = int(request.headers.get("content-length", "0"))
+    except ValueError:
+        raise _latido_invalido("Cuerpo de la solicitud inválido.") from None
+    if largo > TAMANO_MAX_LATIDO:
+        raise _latido_invalido("El cuerpo de la solicitud es demasiado grande.")
+    # Se lee por partes con tope por si el cliente no envía Content-Length (chunked).
+    cuerpo = bytearray()
+    async for trozo in request.stream():
+        cuerpo += trozo
+        if len(cuerpo) > TAMANO_MAX_LATIDO:
+            raise _latido_invalido("El cuerpo de la solicitud es demasiado grande.")
+    try:
+        datos = json.loads(cuerpo)
+    except ValueError:
+        raise _latido_invalido("El cuerpo de la solicitud no es un JSON válido.") from None
+    if not isinstance(datos, dict):
+        raise _latido_invalido("El cuerpo de la solicitud no es válido.")
+    return datos
+
+
+@app.post(RUTA_LATIDO, status_code=204)
+async def api_latido(request: Request):
+    """Registra que la sesión sigue activa. Responde 204 aunque no actualice nada (no revela si la llave existe).
+
+    Nunca se registran en el log la llave ni el token.
+    """
+    datos = await _cuerpo_latido(request)
+    tipo = datos.get("tipo")
+    # `cierre` es opcional: true = el usuario cerró con «Atrás» o «Cerrar sesión». type() evita aceptar 1 o 0.
+    cierre = datos.get("cierre", False)
+    if type(cierre) is not bool:
+        raise _latido_invalido("El campo «cierre» debe ser true o false.")
+
+    if tipo == "mirastock":
+        llave = datos.get("t")
+        try:
+            llave = str(uuid.UUID(llave)) if isinstance(llave, str) else None
+        except ValueError:
+            llave = None
+        if llave is None:
+            raise _latido_invalido("La llave de sesión no es válida.")
+        await run_in_threadpool(db.cierre_mirastock if cierre else db.latido_mirastock, llave)
+        return Response(status_code=204)
+
+    if tipo == "energia":
+        token = datos.get("token")
+        if not isinstance(token, str) or not token.strip():
+            raise _latido_invalido("Falta el token de sesión.")
+        try:
+            correo = await run_in_threadpool(auth.validar_token_energia, token.strip())
+        except auth.ClaveNoDisponible:
+            raise StarletteHTTPException(
+                status_code=503, detail="No se pudo validar el token en este momento. Intenta nuevamente."
+            ) from None
+        except auth.TokenInvalido as e:
+            log.debug("Latido de Energía rechazado: %s", e)
+            raise StarletteHTTPException(status_code=401, detail="El token de sesión no es válido.") from None
+        await run_in_threadpool(db.cierre_energia if cierre else db.latido_energia, correo)
+        return Response(status_code=204)
+
+    raise _latido_invalido("El tipo de latido debe ser «mirastock» o «energia».")
+
+
+# ---------------------------------------------------------------------------
 # Historial de accesos (solo lectura)
 # ---------------------------------------------------------------------------
 
@@ -499,6 +630,19 @@ def _iso_utc(fecha: datetime | None) -> str | None:
     return fecha.strftime("%Y-%m-%dT%H:%M:%SZ") if fecha else None
 
 
+def _texto_cierre(fila: dict) -> str:
+    """Cómo terminó la sesión (mismos textos que la tabla de /historial; vacío si no hubo latidos)."""
+    if fila["CierreExplicito"]:
+        return "Botón"
+    if fila["EnCurso"]:
+        return "En curso"
+    return "Inactividad" if fila["FinalSesion"] else ""
+
+
+def _fecha_csv(fecha: datetime | None) -> str:
+    return fecha.strftime("%Y-%m-%d %H:%M:%S") if fecha else ""
+
+
 def _celda_csv(valor: str) -> str:
     """Neutraliza la inyección de fórmulas: Excel interpretaría = + - @ (y tab o CR) al inicio."""
     return "'" + valor if valor and valor[0] in "=+-@\t\r" else valor
@@ -514,7 +658,7 @@ def api_historial(
 ):
     filas, total = db.listar_historial(filtros, pagina, TAMANO_PAGINA_HISTORIAL)
     return {
-        "filas": [{**f, "Fecha": _iso_utc(f["Fecha"])} for f in filas],
+        "filas": [{**f, "Fecha": _iso_utc(f["Fecha"]), "FinalSesion": _iso_utc(f["FinalSesion"])} for f in filas],
         "total": total,
         "pagina": pagina,
         "tamano": TAMANO_PAGINA_HISTORIAL,
@@ -540,11 +684,19 @@ def api_historial_csv(
     salida = io.StringIO()
     # Separador ';' y BOM: Excel en español abre el archivo con columnas y acentos correctos.
     escritor = csv.writer(salida, delimiter=";", lineterminator="\r\n")
-    escritor.writerow(["Fecha (UTC)", "Usuario", "Correo", "Portal", "Resultado"])
+    escritor.writerow([
+        "Fecha (UTC)", "Usuario", "Correo", "Portal", "Resultado", "Final de sesión (UTC)", "Tiempo de sesión (min)",
+        "Cierre",
+    ])
     for f in filas:
+        segundos = f["TiempoSesionSeg"]
         escritor.writerow([
-            f["Fecha"].strftime("%Y-%m-%d %H:%M:%S") if f["Fecha"] else "",
+            _fecha_csv(f["Fecha"]),
             *(_celda_csv(f[c] or "") for c in ("Usuario", "Correo", "Portal", "Resultado")),
+            _fecha_csv(f["FinalSesion"]),
+            # Minutos enteros truncados (40 s → 0); vacío si no hubo latidos.
+            str(max(0, segundos) // 60) if segundos is not None else "",
+            _texto_cierre(f),
         ])
     nombre = f"historial_accesos_{datetime.now(timezone.utc):%Y%m%d}.csv"
     headers = {"Content-Disposition": f'attachment; filename="{nombre}"'}

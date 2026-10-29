@@ -3,7 +3,7 @@
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 import jwt
@@ -30,18 +30,23 @@ class TokenInvalido(Exception):
     """El token del portal no es válido (firma, expiración, emisor, audiencia o sin correo)."""
 
 
+class ClaveNoDisponible(TokenInvalido):
+    """No se pudo descargar la clave pública del portal (problema nuestro o del portal, no del token)."""
+
+
 # ---------------------------------------------------------------------------
-# Clave pública del portal
+# Claves públicas de los portales
 # ---------------------------------------------------------------------------
 
 class _ClavePortal:
-    def __init__(self) -> None:
+    def __init__(self, url_base: Callable[[], str]) -> None:
+        self._url_base = url_base
         self._clave = None
         self._cargada_en = 0.0
         self._lock = threading.Lock()
 
     def _descargar(self):
-        url = f"{get_settings().portal_base_url}/_services/auth/publickey"
+        url = f"{self._url_base()}/_services/auth/publickey"
         resp = httpx.get(url, timeout=10)
         resp.raise_for_status()
         return load_pem_public_key(resp.text.strip().encode())
@@ -68,7 +73,9 @@ class _ClavePortal:
             self._cargada_en = 0.0
 
 
-clave_portal = _ClavePortal()
+# Portal Externo (ingreso a esta app) y sitio Energía (latidos de sesión).
+clave_portal = _ClavePortal(lambda: get_settings().portal_base_url)
+clave_energia = _ClavePortal(lambda: get_settings().energia_portal_url)
 
 
 def _normalizar_emisor(iss: str) -> str:
@@ -79,42 +86,41 @@ def _normalizar_emisor(iss: str) -> str:
     return iss.split("/", 1)[0]
 
 
-def _decodificar(token: str, clave) -> dict[str, Any]:
-    s = get_settings()
-    opciones = {"require": ["exp", "iss"], "verify_aud": s.token_audience is not None}
+def _decodificar(token: str, clave, audiencia: str | None) -> dict[str, Any]:
+    opciones = {"require": ["exp", "iss"], "verify_aud": audiencia is not None}
     return jwt.decode(
         token,
         clave,
         algorithms=["RS256"],
-        audience=s.token_audience,
+        audience=audiencia,
         options=opciones,
         leeway=_TOLERANCIA_RELOJ_S,
     )
 
 
-def validar_token_portal(token: str) -> str:
-    """Valida el token del portal y devuelve el correo normalizado."""
+def _validar_token(token: str, clave_sitio: _ClavePortal, host_emisor: str, audiencia: str | None) -> str:
+    """Valida un token de Power Pages contra la clave del sitio y devuelve el correo normalizado."""
     if not token:
         raise TokenInvalido("Token vacío")
     try:
-        clave = clave_portal.obtener()
+        clave = clave_sitio.obtener()
     except Exception as e:
         log.error("No se pudo obtener la clave pública del portal: %s", type(e).__name__)
-        raise TokenInvalido("Clave pública no disponible") from None
+        raise ClaveNoDisponible("Clave pública no disponible") from None
 
     try:
-        claims = _decodificar(token, clave)
+        claims = _decodificar(token, clave, audiencia)
     except jwt.InvalidSignatureError:
         # La clave pudo haber rotado: se recarga una vez y se reintenta.
         try:
-            recargada = clave_portal.recargar()
+            recargada = clave_sitio.recargar()
         except Exception as e:
             log.error("No se pudo recargar la clave pública del portal: %s", type(e).__name__)
-            raise TokenInvalido("Clave pública no disponible") from None
+            raise ClaveNoDisponible("Clave pública no disponible") from None
         if not recargada:
             raise TokenInvalido("Firma inválida") from None
         try:
-            claims = _decodificar(token, clave_portal.obtener())
+            claims = _decodificar(token, clave_sitio.obtener(), audiencia)
         except jwt.PyJWTError as e:
             raise TokenInvalido(type(e).__name__) from None
     except jwt.PyJWTError as e:
@@ -123,13 +129,24 @@ def validar_token_portal(token: str) -> str:
     # Solo los nombres de los claims, nunca sus valores.
     log.debug("Claims recibidos en el token del portal: %s", sorted(claims.keys()))
 
-    if _normalizar_emisor(str(claims.get("iss", ""))) != get_settings().portal_host:
+    if _normalizar_emisor(str(claims.get("iss", ""))) != host_emisor:
         raise TokenInvalido("Emisor no válido")
 
     correo = claims.get("email") or claims.get("preferred_username")
     if not isinstance(correo, str) or not correo.strip():
         raise TokenInvalido("El token no trae correo")
     return normalizar_correo(correo)
+
+
+def validar_token_portal(token: str) -> str:
+    """Valida el token del Portal Externo y devuelve el correo normalizado."""
+    s = get_settings()
+    return _validar_token(token, clave_portal, s.portal_host, s.token_audience)
+
+
+def validar_token_energia(token: str) -> str:
+    """Valida el token del sitio Energía (latidos). TOKEN_AUDIENCE aplica solo al Portal Externo."""
+    return _validar_token(token, clave_energia, get_settings().energia_host, None)
 
 
 # ---------------------------------------------------------------------------

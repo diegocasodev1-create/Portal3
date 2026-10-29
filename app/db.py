@@ -9,6 +9,11 @@ Tipos reales (INFORMATION_SCHEMA.COLUMNS):
 Vista core.vHistorialAccesos (solo lectura; la mantiene el usuario, no esta app):
   Fecha datetime2(0) en UTC | Correo (minúsculas) | Usuario (Nombre + Apellido; vacío o NULL si el
   correo no está en UsuariosEntel) | Portal ('Energía' | 'MiraStock') | Resultado ('OK' | 'Denegado')
+  FinalSesion datetime2(0) UTC (último latido; NULL sin latidos) | TiempoSesionSeg int (FinalSesion − Fecha;
+  NULL sin latidos) | EnCurso bit (1 si el último latido tiene menos de 5 minutos; 0 si se cerró con botón)
+  | CierreExplicito bit (1 si la sesión se cerró con el botón «Atrás» o «Cerrar sesión»)
+
+Latidos (POST /api/latido) escriben FinalSesion en core.SesionesAgente (MiraStock) y core.HistorialAccesos (Energía).
 """
 
 from contextlib import contextmanager
@@ -181,6 +186,103 @@ def marcar_invitacion_enviada(usuario_id: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Latidos de sesión (POST /api/latido)
+# ---------------------------------------------------------------------------
+
+# Un latido no reescribe FinalSesion si el anterior llegó hace menos de 60 s, y nunca toca una sesión cerrada.
+_SQL_LATIDO_MIRASTOCK = (
+    "UPDATE core.SesionesAgente SET FinalSesion = SYSUTCDATETIME()"
+    " WHERE Token = ? AND CreadoEn >= DATEADD(HOUR, -12, SYSUTCDATETIME())"
+    " AND COALESCE(CierreExplicito, 0) = 0"
+    " AND (FinalSesion IS NULL OR FinalSesion < DATEADD(SECOND, -60, SYSUTCDATETIME()))"
+)
+
+# Cierre con botón: sin la regla de 60 s. ExpiraEn se adelanta a ahora, así el agente ya no acepta la llave.
+_SQL_CIERRE_MIRASTOCK = (
+    "UPDATE core.SesionesAgente"
+    " SET FinalSesion = SYSUTCDATETIME(),"
+    " ExpiraEn = CASE WHEN ExpiraEn > SYSUTCDATETIME() THEN SYSUTCDATETIME() ELSE ExpiraEn END,"
+    " CierreExplicito = 1"
+    " WHERE Token = ? AND CreadoEn >= DATEADD(HOUR, -12, SYSUTCDATETIME()) AND COALESCE(CierreExplicito, 0) = 0"
+)
+
+# Energía: la fila activa es la MÁS RECIENTE de la ventana de 30 min (abierta o cerrada); después se decide
+# según su estado. Todo va en un batch dentro de la transacción de la conexión: UPDLOCK + HOLDLOCK bloquean el
+# rango buscado hasta el commit, así dos latidos simultáneos no insertan dos filas.
+_SQL_ENERGIA_INICIO = (
+    "SET NOCOUNT ON; SET XACT_ABORT ON;"
+    " DECLARE @correo NVARCHAR(256) = ?;"
+    " DECLARE @ahora DATETIME2 = SYSUTCDATETIME();"
+    " DECLARE @previa TABLE (Cerrada BIT, FinalSesion DATETIME2(0));"
+    " WITH ult AS ("
+    " SELECT TOP (1) FinalSesion, CierreExplicito FROM core.HistorialAccesos WITH (UPDLOCK, HOLDLOCK)"
+    " WHERE Correo = @correo AND Portal = N'Energía' AND Resultado = N'OK'"
+    " AND COALESCE(FinalSesion, Fecha) >= DATEADD(MINUTE, -30, @ahora)"
+    " ORDER BY Fecha DESC)"
+)
+
+# Latido normal: abierta → FinalSesion (regla de 60 s); cerrada hace 60 s o más, o sin fila → INSERT;
+# cerrada hace menos de 60 s → se ignora (un latido que venía en camino al momento del cierre).
+_SQL_LATIDO_ENERGIA = _SQL_ENERGIA_INICIO + (
+    " UPDATE ult SET FinalSesion = CASE"
+    " WHEN COALESCE(CierreExplicito, 0) = 0"
+    " AND (FinalSesion IS NULL OR FinalSesion < DATEADD(SECOND, -60, @ahora))"
+    " THEN @ahora ELSE FinalSesion END"
+    " OUTPUT COALESCE(deleted.CierreExplicito, 0), deleted.FinalSesion INTO @previa;"
+    " IF NOT EXISTS (SELECT 1 FROM @previa)"
+    " OR EXISTS (SELECT 1 FROM @previa WHERE Cerrada = 1"
+    " AND (FinalSesion IS NULL OR FinalSesion < DATEADD(SECOND, -60, @ahora)))"
+    " BEGIN"
+    " INSERT INTO core.HistorialAccesos (Correo, Portal, Resultado, Fecha, FinalSesion)"
+    " VALUES (@correo, N'Energía', N'OK', @ahora, @ahora);"
+    " SELECT CAST(1 AS BIT);"
+    " END"
+    " ELSE SELECT CAST(0 AS BIT);"
+)
+
+# Cierre: solo si la fila más reciente está abierta. Nunca inserta.
+_SQL_CIERRE_ENERGIA = _SQL_ENERGIA_INICIO + (
+    " UPDATE ult SET"
+    " FinalSesion = CASE WHEN COALESCE(CierreExplicito, 0) = 0 THEN @ahora ELSE FinalSesion END,"
+    " CierreExplicito = CASE WHEN COALESCE(CierreExplicito, 0) = 0 THEN 1 ELSE CierreExplicito END"
+    " OUTPUT COALESCE(deleted.CierreExplicito, 0) INTO @previa (Cerrada);"
+    " SELECT CAST(CASE WHEN EXISTS (SELECT 1 FROM @previa WHERE Cerrada = 0) THEN 1 ELSE 0 END AS BIT);"
+)
+
+
+def latido_mirastock(token: str) -> bool:
+    """Marca FinalSesion de la llave de MiraStock (aunque ya pasó su ExpiraEn). True si actualizó una fila."""
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(_SQL_LATIDO_MIRASTOCK, token)
+        return cur.rowcount > 0
+
+
+def cierre_mirastock(token: str) -> bool:
+    """Cierra la sesión de MiraStock y anula la llave. True si cerró una sesión abierta."""
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(_SQL_CIERRE_MIRASTOCK, token)
+        return cur.rowcount > 0
+
+
+def latido_energia(correo: str) -> bool:
+    """Extiende la última sesión OK de Energía (ventana de 30 min) o inserta una nueva. True si insertó."""
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(_SQL_LATIDO_ENERGIA, correo)
+        return bool(cur.fetchone()[0])
+
+
+def cierre_energia(correo: str) -> bool:
+    """Cierra la última sesión OK de Energía si está abierta (ventana de 30 min). True si cerró una."""
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(_SQL_CIERRE_ENERGIA, correo)
+        return bool(cur.fetchone()[0])
+
+
+# ---------------------------------------------------------------------------
 # Historial de accesos (solo lectura sobre core.vHistorialAccesos)
 # ---------------------------------------------------------------------------
 
@@ -233,14 +335,20 @@ def listar_historial(
         cur.execute(f"SELECT COUNT(*) FROM core.vHistorialAccesos{where}", *params)
         total = cur.fetchone()[0]
         cur.execute(
-            "SELECT Fecha, ISNULL(Usuario, '') AS Usuario, Correo, Portal, Resultado"
+            "SELECT Fecha, ISNULL(Usuario, '') AS Usuario, Correo, Portal, Resultado,"
+            " FinalSesion, TiempoSesionSeg, ISNULL(EnCurso, 0) AS EnCurso,"
+            " ISNULL(CierreExplicito, 0) AS CierreExplicito"
             f" FROM core.vHistorialAccesos{where}"
             " ORDER BY Fecha DESC, Correo"
             " OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
             *params, (pagina - 1) * tamano, tamano,
         )
         filas = [
-            {"Fecha": r[0], "Usuario": (r[1] or "").strip(), "Correo": r[2], "Portal": r[3], "Resultado": r[4]}
+            {
+                "Fecha": r[0], "Usuario": (r[1] or "").strip(), "Correo": r[2], "Portal": r[3], "Resultado": r[4],
+                "FinalSesion": r[5], "TiempoSesionSeg": r[6], "EnCurso": bool(r[7]),
+                "CierreExplicito": bool(r[8]),
+            }
             for r in cur.fetchall()
         ]
     return filas, total
@@ -255,11 +363,18 @@ def resumen_historial(filtros: FiltrosHistorial, tz_offset_min: int) -> dict[str
             "SELECT COUNT(*), COUNT(DISTINCT Correo),"
             " ISNULL(SUM(CASE WHEN Portal = N'Energía' THEN 1 ELSE 0 END), 0),"
             " ISNULL(SUM(CASE WHEN Portal = 'MiraStock' THEN 1 ELSE 0 END), 0),"
-            " ISNULL(SUM(CASE WHEN Resultado = 'Denegado' THEN 1 ELSE 0 END), 0)"
+            " ISNULL(SUM(CASE WHEN Resultado = 'Denegado' THEN 1 ELSE 0 END), 0),"
+            # AVG y SUM ignoran los NULL: solo cuentan las filas con latidos.
+            " AVG(CAST(TiempoSesionSeg AS BIGINT)),"
+            " ISNULL(SUM(CASE WHEN Portal = N'Energía' THEN CAST(TiempoSesionSeg AS BIGINT) END), 0),"
+            " ISNULL(SUM(CASE WHEN Portal = 'MiraStock' THEN CAST(TiempoSesionSeg AS BIGINT) END), 0),"
+            " ISNULL(SUM(CASE WHEN EnCurso = 1 THEN 1 ELSE 0 END), 0),"
+            " ISNULL(SUM(CASE WHEN CierreExplicito = 1 THEN 1 ELSE 0 END), 0)"
             f" FROM core.vHistorialAccesos{where}",
             *params,
         )
-        total, unicos, energia, mirastock, denegados = cur.fetchone()
+        (total, unicos, energia, mirastock, denegados,
+         promedio, tiempo_energia, tiempo_mirastock, en_curso, cerradas_boton) = cur.fetchone()
         cur.execute(
             "SELECT Dia, COUNT(*) FROM ("
             " SELECT CAST(DATEADD(minute, ?, Fecha) AS date) AS Dia"
@@ -273,6 +388,10 @@ def resumen_historial(filtros: FiltrosHistorial, tz_offset_min: int) -> dict[str
         "usuariosUnicos": unicos,
         "porPortal": {"Energía": energia, "MiraStock": mirastock},
         "denegados": denegados,
+        "tiempoPromedioSeg": int(promedio) if promedio is not None else None,
+        "tiempoTotalSeg": {"Energía": int(tiempo_energia), "MiraStock": int(tiempo_mirastock)},
+        "enCurso": en_curso,
+        "cerradasBoton": cerradas_boton,
         "porDia": por_dia,
     }
 

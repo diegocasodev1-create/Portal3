@@ -8,7 +8,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
 
-## Current status (as of 2026-10-28; v7 deployed that day)
+## Current status (as of 2026-10-29; v8 deployed, v9 coded but NOT deployed)
+
+### v9 (2026-10-29): explicit session close (`"cierre": true` in `/api/latido`) — CODED, NOT DEPLOYED
+- **365 tests pass** (42 new). JS checked with esprima. Build and deploy wait for the user's OK. Not reviewed in a browser.
+- Done by the user (Claude must not touch them):
+  - `CierreExplicito BIT NULL DEFAULT 0` in `core.HistorialAccesos` and `core.SesionesAgente`.
+  - The view returns `CierreExplicito` (last column), and `EnCurso` is 0 when it is 1.
+  - The MiraStock page sends `{"tipo":"mirastock","t":...,"cierre":true}` by `sendBeacon` (text/plain) on «Atrás» / «Cerrar sesión».
+  - The Energía close will be used in "Phase 4" (not sent yet).
+- User decisions (2026-10-29):
+  - The Energía "active row" is the MOST RECENT row in the 30-min window, open or closed; the state decides after that.
+  - A normal Energía heartbeat is ignored if that row was closed less than 60 s ago.
+
+### v8 (2026-10-29): session heartbeats (`POST /api/latido`) — DEPLOYED
+- **323 tests pass** (93 new in `tests/test_latido.py`, plus new columns/indicators in `tests/test_historial.py`). JS checked with esprima.
+- The user reviewed `/historial` locally (against the prod DB, `AUTH_ENABLED=false` for the process only) and approved it on 2026-10-29.
+  - The local check against the real view: listado, resumen and CSV returned 200 with the new fields. There were 15 accesses in the last 7 days, none with heartbeats yet.
+  - «En curso» and durations like «1 h 05 min» have not been seen with real data; only the tests cover them.
+- Deployed on 2026-10-29 (~18:37 UTC) as revision `--0000010`. Checks after the deploy:
+  - `/health` returned 200, and startup was clean.
+  - `--0000010` (v8) has 100% of the traffic, and `--0000009` was deactivated.
+  - `POST /api/latido` returned 400 for an empty body and for `{}`.
+  - The preflight from `https://portalenergia.powerappsportals.com` returned 204 with ACAO, and from a disallowed origin it returned 403.
+  - No real heartbeat (MiraStock key or Energía token) has been sent to production yet.
+- Done by the user (Claude must not touch them):
+  - `FinalSesion DATETIME2(0) NULL` (UTC) in `core.HistorialAccesos` and `core.SesionesAgente`.
+  - `core.vHistorialAccesos` returns `FinalSesion`, `TiempoSesionSeg` and `EnCurso`.
+  - Indexes `IX_HistorialAccesos_Correo_Fecha` (Correo, Fecha DESC) INCLUDE (Portal, Resultado) and `IX_SesionesAgente_Token`.
+  - Expired `SesionesAgente` rows are no longer deleted.
+  - The Power Pages JS (Energía and MiraStock) that sends the heartbeats every 2 minutes, plus `sendBeacon` on close. The user pastes it into Power Pages.
+- After deploying: `ENERGIA_PORTAL_URL` and `LATIDO_ORIGINS` have code defaults, so no env change is needed unless the origins change.
 
 ### What happened after the v6 deploy (from Log Analytics and Graph)
 - 2026-10-23, all from the user's IP:
@@ -41,6 +71,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `Fecha` and `Correo` are nullable in the view. The API returns `null` for them and the CSV leaves the cell empty.
 
 ### Next session: start here
+0. **v8 heartbeats:** ask the user whether the Power Pages JS (Energía and MiraStock) is published. Then check in `/historial` that `FinalSesion` / «Tiempo de sesión» fill in. A Log Analytics query for errors on `/api/latido` is possible: the app logs only errors there, never the key or token, and the access log excludes the route. Each query needs the user's OK.
 1. **Ask the user** whether the welcome emails for Id 55 and 56 arrived and whether code-only sign-in worked for them. Not verified by Claude.
 2. **Sync** (`python -m app.tools.sync_externalid`): there is no evidence it was ever run.
    - It is safe now: the v6 External ID logic is unchanged in v7, locally and in Azure.
@@ -50,13 +81,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Deployment
 - URL: https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io
 - Revision mode `Single`: traffic follows the latest revision, and no older one is kept for rollback.
-- **Running: image v7, revision `ca-mira-admin--0000009`, with `AUTH_ENABLED=false`, `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~15:56 UTC on 2026-10-28. `/health` is OK and startup was clean. It is the only revision, with 100% of the traffic. The next image is **v8**.
+- **Running: image v8, revision `ca-mira-admin--0000010`, with `AUTH_ENABLED=false`, `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~18:37 UTC on 2026-10-29. `/health` is OK and startup was clean. It is the only active revision, with 100% of the traffic. `ENERGIA_PORTAL_URL` and `LATIDO_ORIGINS` are not set in Azure, so the code defaults apply. The next image is **v9**.
 - Image history:
   - v3: auth off.
   - v4: External ID + PDF attachment.
   - v5: no attachment (`--0000005`; `--0000006` = v5 with `EXTID_ENABLED=false`).
   - v6: federated/mail accounts + 409 for legacy accounts (`--0000007` with External ID off, `--0000008` with it on).
   - v7: home page + `/contactos` + `/historial` (read-only access log) (`--0000009`).
+  - v8: session heartbeats `POST /api/latido` + session time in `/historial` + `?v=8` cache busting (`--0000010`).
 - **az CLI** is logged in to both tenants (`e3112796-…` workforce/subscription, `cb938793-…` External ID), and the active one can switch. Before az commands on Azure resources, run `az account set --subscription 38b3f030-c7b5-4d38-822b-c533f88cd34a`.
 - Logs older than the current replica (it scales to 0): Log Analytics workspace `d8a192a1-91f6-4add-882c-d1396d044ba0`, table `ContainerAppConsoleLogs_CL`, via `az monitor log-analytics query`. The app logs the user Id and the External ID account id, never the email.
 
@@ -95,7 +127,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Verified:
   - The portal public key loads (local and Azure).
   - `/health`, the no-session page, and the 401/404 checks pass.
-  - **222 tests pass** (13 in `tests/test_sin_auth.py`, 84 in `tests/test_historial.py`).
+  - **323 tests pass** (13 in `tests/test_sin_auth.py`, 93 in `tests/test_latido.py`).
   - Code-only sign-in with a federated/mail account works.
   - Welcome emails arrive at other domains (per the user).
 - Not tested yet:
@@ -142,7 +174,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   7. It redirects with 303 to `/`.
 - **`AUTH_ENABLED` (default `true`):** with `false`, `/`, `/contactos` and `/historial` are served directly. The session middleware neither reads nor renews the cookie. `require_admin` returns `None` without checking SQL, so every `/api/*` handler takes `admin: str | None`, and the "self" rules apply only when `admin` is set. `/api/me` returns `{"correo": null, "authEnabled": false}` (with `true` it stays exactly `{"correo": ...}`), and `app.js` / `comun.js` then hide the `.sesion` header block. CSP, headers and CSRF are unchanged. Tests toggle it with the `sin_auth` / `cliente_sin_auth` fixtures.
 - **Authorization:** `require_admin` re-checks Portal3 and Activo in SQL on *every* `/api/*` request, so revoking access cuts it off immediately. No session → 401; no permission → 403.
-- **CSRF:** POST/PUT/PATCH/DELETE on `/api/*` require `Content-Type: application/json` and `X-Requested-With: mira-admin`. Otherwise the app returns 403.
+- **CSRF:** POST/PUT/PATCH/DELETE on `/api/*` require `Content-Type: application/json` and `X-Requested-With: mira-admin`. Otherwise the app returns 403. **Only exception: `/api/latido`** (public, no cookies, auth in the body).
 - **Security headers:** Strict CSP (`script-src 'self'`; no inline scripts or `style=""` attributes in HTML), `nosniff` and `Referrer-Policy: no-referrer`. Never log tokens, cookies or bodies; claim *names* only at DEBUG. `main.py` forces the msal/httpx/httpcore loggers to WARNING.
 - **DB (`db.py`):** pyodbc with ODBC Driver 18 and parameterized queries only. NULL bits count as 0. Correo is lowercased and trimmed.
   - The real schema is in the `db.py` docstring. `Apellido` is `NOT NULL`, so an empty apellido is stored as `''`.
@@ -175,13 +207,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - PUT, POST create and DELETE return `avisoCuenta` (bool). The UI shows a yellow `toast-aviso` when it is true.
   - Tests: the `cuentas` fixture (`CuentasFalsas` in `conftest.py`) fakes the API-level calls. `tests/test_externalid.py` fakes `httpx.request` + msal for the module and the sync script.
   - **Sync tool:** `python -m app.tools.sync_externalid [--apply]` reads `db.listar_usuarios_con_acceso()`. It exits 2 and touches nothing if External ID is disabled or missing credentials. This reads the **production** table, so the user approves each run.
+- **Session heartbeats (`POST /api/latido`, v8):**
+  - Public: no `require_admin`, no CSRF header, no cookies. Body JSON ≤ 8 KB (Content-Length and streamed size are both checked), `Content-Type` `application/json` or `text/plain` (for `sendBeacon`). The handler is `async` and runs token validation and DB calls with `run_in_threadpool`.
+  - `{"tipo":"mirastock","t":<GUID>}` → `db.latido_mirastock` (UPDATE `core.SesionesAgente` by Token, CreadoEn within 12 h, 60 s rule; ignores ExpiraEn). The GUID is normalized with `uuid.UUID`.
+  - `{"tipo":"energia","token":...}` → `auth.validar_token_energia` (same logic as `/auth/portal` via `auth._validar_token`, separate key cache `auth.clave_energia` from `ENERGIA_PORTAL_URL`, issuer = Energía host, no audience check) → `db.latido_energia(correo)`: one batch with `UPDLOCK, HOLDLOCK` that updates the latest OK Energía row whose `COALESCE(FinalSesion, Fecha)` is within 30 min (60 s rule via `CASE`, so a fast repeat never INSERTs), else INSERTs `Fecha = FinalSesion = SYSUTCDATETIME()`. It relies on the connection's transaction (`autocommit=False`), with no BEGIN TRAN.
+  - Responses: 204 whenever valid (never reveals whether a key exists), 400 bad body, 401 bad token, 503 DB error or `auth.ClaveNoDisponible` (Energía key download failed; it subclasses `TokenInvalido`, so `/auth/portal` still answers 401 there).
+  - CORS: custom `cors_latido` middleware for this route only. Origins from `LATIDO_ORIGINS` (normalized: lowercase, no trailing slash), POST only, header Content-Type, no credentials, Max-Age 600. A preflight or POST with a disallowed Origin → 403. No Origin → processed.
+  - Never log `t` or the token (rejections are logged at DEBUG with the reason only). `main._SinLatidos` filters `/api/latido` out of `uvicorn.access`.
+  - Tests: `BDFalsa.latido_*` reproduce the SQL rules with `bd.ahora`; `crear_token_energia` + autouse fixture `clave_de_energia` (`estado["error"]` simulates the key being unavailable).
+- **Static cache busting:** pages reference `/static/*.css|js?v=9`. Bump it on every release that changes static files.
+- **Explicit close (v9):** optional `"cierre"` in `/api/latido`, which must be a real bool (`type(x) is bool`; anything else → 400, `false` = normal heartbeat).
+  - MiraStock: `db.cierre_mirastock` sets FinalSesion, `CierreExplicito = 1`, and `ExpiraEn = now` if it was in the future (the key is revoked). No 60 s rule, and never on an already closed session. Normal heartbeats add `COALESCE(CierreExplicito, 0) = 0`.
+  - Energía: `_SQL_ENERGIA_INICIO` picks the latest row in the window (no closed filter) with `UPDLOCK, HOLDLOCK`. `UPDATE ... OUTPUT deleted.* INTO @previa` captures its prior state.
+    - `latido_energia`: open → extend (60 s rule); closed ≥ 60 s ago or no row → INSERT; closed < 60 s ago → ignored.
+    - `cierre_energia`: closes it only if open, and never inserts.
+  - `/historial`: rows have `CierreExplicito` and resumen has `cerradasBoton`. The «Cierre» column (UI `textoCierre`, CSV `main._texto_cierre`) shows Botón > En curso > Inactividad (if FinalSesion) > «—» (empty in the CSV).
 - **Business rules (API and UI):** At least one portal must be checked. Correo cannot be edited. An admin cannot delete themselves or remove their own Portal3 (400). Validation errors return 422 `{detail, errores: {campo: msg}}`, and the UI shows them next to each field.
 - **Pages:** `inicio.html` (`/`), `contactos.html` (`/contactos`), `historial.html` (`/historial`) and the templates in `app/templates/` get `{{PORTAL_URL}}` (and `{{MENSAJE}}`) substituted at startup with escaped values. There is no Jinja.
   - The three routes share `main._pagina_protegida(request, html)`, which is the old `/` logic: auth off → page; no session → `sin_acceso` 200; DB error → 503; no Portal3/Activo → `sin_permisos` 403. `/auth/portal` still redirects 303 to `/`, which is now the home page.
   - `contactos.html` + `app.js` is the user admin, unchanged except the h1 («Centro Administración de contactos») and the «Inicio» link. `app.js` has its own API client and header code. `inicio.html` and `historial.html` use `comun.js` (`window.Mira`: `api`, `solicitar`, `el`, `toast`, `setOcupado`, session-expired overlay, `/api/me` header, logout).
   - The header markup is duplicated in each HTML (no templating). `.nav-inicio` holds the «Inicio» link outside `.sesion`, so it stays visible when auth is off.
 - **Access history (`/historial`, read-only):**
-  - Source: view `core.vHistorialAccesos` (Fecha DATETIME2(0) UTC, Correo lowercase, Usuario may be empty/NULL, Portal `Energía`|`MiraStock`, Resultado `OK`|`Denegado`). Owned by the user, not by this app.
+  - Source: view `core.vHistorialAccesos` (Fecha DATETIME2(0) UTC, Correo lowercase, Usuario may be empty/NULL, Portal `Energía`|`MiraStock`, Resultado `OK`|`Denegado`, FinalSesion UTC or NULL, TiempoSesionSeg int or NULL, EnCurso bit). Owned by the user, not by this app.
+  - v8: rows add `FinalSesion` (ISO `Z`/null), `TiempoSesionSeg`, `EnCurso` (bool). Resumen adds `tiempoPromedioSeg` (AVG of non-NULL, or null), `tiempoTotalSeg: {Energía, MiraStock}` and `enCurso`. CSV adds «Final de sesión (UTC)» and «Tiempo de sesión (min)» (truncated integer minutes). UI: «En curso» chip, durations «< 1 min» / «44 min» / «1 h 05 min» (truncated), 4 new indicators.
   - `db.py`: `FiltrosHistorial` dataclass; `_where_historial` builds the WHERE from fixed fragments + `?` (correo uses `LIKE ? ESCAPE '\'` with `% _ [ \` escaped, lowercased). `listar_historial(filtros, pagina, tamano=50)` → `(filas, total)` with `ORDER BY Fecha DESC, Correo OFFSET/FETCH`. `resumen_historial(filtros, tz_offset_min)` → totals + `porDia` grouped by `CAST(DATEADD(minute, ?, Fecha) AS date)`.
   - `main.py`: `_filtros_historial` dependency validates everything at once and raises `ErrorValidacion(errores)` → 422 `{detail, errores}`. Portal/resultado match case-insensitively and are stored canonical. Dates: ISO 8601, aware → converted to naive UTC, naive = UTC; `desde` inclusive, `hasta` exclusive, `desde < hasta`. `pagina` 1..1,000,000, `tz_offset_min` −840..840. `admin` is declared first so 401 comes before 422.
   - Endpoints: `GET /api/historial` → `{filas, total, pagina, tamano, paginas}` (Fecha as `...Z`); `/api/historial/resumen` → `{total, usuariosUnicos, porPortal, denegados, porDia}`; `/api/historial/csv` → BOM + `;` + CRLF, Fecha `AAAA-MM-DD hh:mm:ss` UTC, cells starting with `= + - @ \t \r` get a `'`, filename `historial_accesos_AAAAMMDD.csv`, cap `TOPE_CSV_HISTORIAL` = 50,000 (more → header `X-Historial-Truncado`).
@@ -197,7 +245,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - It swaps `app.db` and `mailer.enviar_bienvenida` for in-memory fakes and signs tokens with throwaway RSA keys.
   - The TestClient uses `https://testserver`. Cookies set manually need `domain="testserver.local"`.
 - JS syntax check: there is no Node on this machine. Use esprima from a scratch target dir: `pip install --target <dir> esprima==4.0.1`, then `esprima.parseScript(...)`.
-- Deploy a new version (always a new tag; v8 is next): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
+- Deploy a new version (always a new tag; v9 is next and already uses `?v=9`; bump `?v=` in the HTML if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
 - Azure layout:
   - `ca-mira-admin` is in `RG-COPILOT-DEV`, East US, with 0.25 vCPU, 0.5 Gi and 0–1 replicas.
   - It reuses environment `managedEnvironment-rgscripth25prod-818f` and ACR `acrscripth25prod`, both in `rg-script-h25-prod`.

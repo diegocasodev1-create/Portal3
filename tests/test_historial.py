@@ -22,7 +22,7 @@ def revocar_admin(bd):
 PAGINAS = {
     "/": ("Portal de administración", 'href="/historial"'),
     "/contactos": ("Centro Administración de contactos", 'id="tabla-cuerpo"'),
-    "/historial": ("Logs control de ingresos", '<script src="/static/historial.js"'),
+    "/historial": ("Logs control de ingresos", '<script src="/static/historial.js?v=9"'),
 }
 
 
@@ -150,19 +150,44 @@ def test_listado_ordenado_y_fechas_iso_z(cliente_admin, bd):
     assert datos["total"] == 2 and datos["pagina"] == 1 and datos["tamano"] == 50 and datos["paginas"] == 1
     assert datos["filas"] == [
         {"Fecha": "2026-10-21T09:05:07Z", "Usuario": "", "Correo": "b@ejemplo.com",
-         "Portal": "MiraStock", "Resultado": "Denegado"},
+         "Portal": "MiraStock", "Resultado": "Denegado", "FinalSesion": None, "TiempoSesionSeg": None, "EnCurso": False,
+         "CierreExplicito": False},
         {"Fecha": "2026-10-20T08:00:00Z", "Usuario": "Ana Pérez", "Correo": "a@ejemplo.com",
-         "Portal": "Energía", "Resultado": "OK"},
+         "Portal": "Energía", "Resultado": "OK", "FinalSesion": None, "TiempoSesionSeg": None, "EnCurso": False,
+         "CierreExplicito": False},
+    ]
+
+
+def test_listado_cierre_explicito(cliente_admin, bd):
+    bd.agregar_acceso(FECHA, "a@ejemplo.com", final_sesion=FECHA + timedelta(minutes=3), cierre=True)
+    bd.agregar_acceso(FECHA - timedelta(hours=1), "b@ejemplo.com", final_sesion=FECHA - timedelta(minutes=50))
+    filas = cliente_admin.get("/api/historial").json()["filas"]
+    assert [(f["Correo"], f["CierreExplicito"], f["EnCurso"]) for f in filas] == [
+        ("a@ejemplo.com", True, False), ("b@ejemplo.com", False, False),
+    ]
+
+
+def test_listado_columnas_de_sesion(cliente_admin, bd):
+    inicio = datetime(2026, 10, 20, 8, 0, 0)
+    bd.agregar_acceso(inicio, "a@ejemplo.com", final_sesion=inicio + timedelta(minutes=44, seconds=5))
+    bd.agregar_acceso(inicio - timedelta(hours=1), "b@ejemplo.com", "MiraStock",
+                      final_sesion=inicio - timedelta(minutes=58), en_curso=True)
+    filas = cliente_admin.get("/api/historial").json()["filas"]
+    assert [(f["FinalSesion"], f["TiempoSesionSeg"], f["EnCurso"]) for f in filas] == [
+        ("2026-10-20T08:44:05Z", 2645, False),
+        ("2026-10-20T07:02:00Z", 120, True),
     ]
 
 
 def test_fila_con_fecha_o_correo_nulos_no_rompe(cliente_admin, bd, monkeypatch):
-    fila = {"Fecha": None, "Usuario": "", "Correo": None, "Portal": "MiraStock", "Resultado": "OK"}
+    fila = {"Fecha": None, "Usuario": "", "Correo": None, "Portal": "MiraStock", "Resultado": "OK",
+            "FinalSesion": None, "TiempoSesionSeg": None, "EnCurso": False,
+         "CierreExplicito": False}
     monkeypatch.setattr(db, "listar_historial", lambda *args: ([dict(fila)], 1))
     datos = cliente_admin.get("/api/historial").json()
-    assert datos["filas"] == [{**fila, "Fecha": None}]
+    assert datos["filas"] == [fila]
     lineas = cliente_admin.get("/api/historial/csv").content.decode("utf-8-sig").splitlines()
-    assert lineas[1] == ";;;MiraStock;OK"
+    assert lineas[1] == ";;;MiraStock;OK;;;"
 
 
 def test_listado_vacio(cliente_admin):
@@ -285,8 +310,33 @@ def test_resumen_indicadores(cliente_admin, bd):
         "usuariosUnicos": 2,
         "porPortal": {"Energía": 2, "MiraStock": 1},
         "denegados": 1,
+        "tiempoPromedioSeg": None,
+        "tiempoTotalSeg": {"Energía": 0, "MiraStock": 0},
+        "enCurso": 0,
+        "cerradasBoton": 0,
         "porDia": [{"dia": "2026-10-20", "total": 2}, {"dia": "2026-10-21", "total": 1}],
     }
+
+
+def test_resumen_cerradas_con_boton(cliente_admin, bd):
+    fin = FECHA + timedelta(minutes=5)
+    bd.agregar_acceso(FECHA, "a@ejemplo.com", final_sesion=fin, cierre=True)
+    bd.agregar_acceso(FECHA, "b@ejemplo.com", "MiraStock", final_sesion=fin, cierre=True)
+    bd.agregar_acceso(FECHA, "c@ejemplo.com", final_sesion=fin)
+    assert cliente_admin.get("/api/historial/resumen").json()["cerradasBoton"] == 2
+
+
+def test_resumen_tiempos_de_sesion(cliente_admin, bd):
+    inicio = datetime(2026, 10, 20, 12, 0)
+    bd.agregar_acceso(inicio, "a@ejemplo.com", "Energía", final_sesion=inicio + timedelta(minutes=10))
+    bd.agregar_acceso(inicio, "b@ejemplo.com", "Energía", final_sesion=inicio + timedelta(minutes=20))
+    bd.agregar_acceso(inicio, "c@ejemplo.com", "MiraStock", final_sesion=inicio + timedelta(minutes=30),
+                      en_curso=True)
+    bd.agregar_acceso(inicio, "d@ejemplo.com", "MiraStock")  # sin latidos: no cuenta en los tiempos
+    datos = cliente_admin.get("/api/historial/resumen").json()
+    assert datos["tiempoPromedioSeg"] == 1200
+    assert datos["tiempoTotalSeg"] == {"Energía": 1800, "MiraStock": 1800}
+    assert datos["enCurso"] == 1
 
 
 def test_resumen_agrupa_por_dia_local(cliente_admin, bd):
@@ -319,11 +369,32 @@ def test_csv_formato(cliente_admin, bd):
     assert "x-historial-truncado" not in resp.headers
     assert resp.content.startswith(b"\xef\xbb\xbf")
     assert resp.content.decode("utf-8-sig").split("\r\n") == [
-        "Fecha (UTC);Usuario;Correo;Portal;Resultado",
-        "2026-10-20 08:05:09;Ana Pérez;ana@ejemplo.com;Energía;OK",
-        "2026-10-19 07:00:00;;sin.nombre@ejemplo.com;MiraStock;Denegado",
+        "Fecha (UTC);Usuario;Correo;Portal;Resultado;Final de sesión (UTC);Tiempo de sesión (min);Cierre",
+        "2026-10-20 08:05:09;Ana Pérez;ana@ejemplo.com;Energía;OK;;;",
+        "2026-10-19 07:00:00;;sin.nombre@ejemplo.com;MiraStock;Denegado;;;",
         "",
     ]
+
+
+def test_csv_columnas_de_sesion_minutos_enteros(cliente_admin, bd):
+    inicio = datetime(2026, 10, 20, 8, 0, 0)
+    bd.agregar_acceso(inicio, "a@ejemplo.com", final_sesion=inicio + timedelta(minutes=65, seconds=59))
+    bd.agregar_acceso(inicio - timedelta(hours=1), "b@ejemplo.com", final_sesion=inicio - timedelta(minutes=59, seconds=20))
+    lineas = cliente_admin.get("/api/historial/csv").content.decode("utf-8-sig").split("\r\n")
+    assert lineas[1] == "2026-10-20 08:00:00;;a@ejemplo.com;Energía;OK;2026-10-20 09:05:59;65;Inactividad"
+    assert lineas[2] == "2026-10-20 07:00:00;;b@ejemplo.com;Energía;OK;2026-10-20 07:00:40;0;Inactividad"
+
+
+def test_csv_columna_cierre(cliente_admin, bd):
+    inicio = datetime(2026, 10, 20, 8, 0, 0)
+    fin = inicio + timedelta(minutes=10)
+    bd.agregar_acceso(inicio, "boton@ejemplo.com", final_sesion=fin, cierre=True)
+    bd.agregar_acceso(inicio - timedelta(minutes=1), "curso@ejemplo.com", final_sesion=fin, en_curso=True)
+    bd.agregar_acceso(inicio - timedelta(minutes=2), "inactivo@ejemplo.com", final_sesion=fin)
+    bd.agregar_acceso(inicio - timedelta(minutes=3), "sin.latidos@ejemplo.com")
+    lineas = cliente_admin.get("/api/historial/csv").content.decode("utf-8-sig").split("\r\n")
+    assert lineas[0].endswith(";Tiempo de sesión (min);Cierre")
+    assert [linea.split(";")[-1] for linea in lineas[1:-1]] == ["Botón", "En curso", "Inactividad", ""]
 
 
 def test_csv_neutraliza_formulas(cliente_admin, bd):
@@ -340,7 +411,7 @@ def test_csv_neutraliza_formulas(cliente_admin, bd):
 def test_csv_escapa_separador(cliente_admin, bd):
     bd.agregar_acceso(FECHA, "a@ejemplo.com", usuario='Pérez; "Ana"')
     linea = cliente_admin.get("/api/historial/csv").content.decode("utf-8-sig").split("\r\n")[1]
-    assert linea == '2026-10-20 15:30:00;"Pérez; ""Ana""";a@ejemplo.com;Energía;OK'
+    assert linea == '2026-10-20 15:30:00;"Pérez; ""Ana""";a@ejemplo.com;Energía;OK;;;'
 
 
 def test_csv_aplica_filtros_sin_paginar(cliente_admin, bd):
@@ -420,12 +491,18 @@ def cursor_falso(monkeypatch):
 
 def test_db_listar_historial_offset_y_usuario_nulo(cursor_falso):
     cursor_falso["cursor"] = cur = CursorFalso(
-        uno=[(51,)], todos=[[(FECHA, None, "a@ejemplo.com", "Energía", "OK")]]
+        uno=[(51,)], todos=[[(FECHA, None, "a@ejemplo.com", "Energía", "OK", FECHA + timedelta(minutes=5), 300, 1, 0)]]
     )
     filas, total = db.listar_historial(db.FiltrosHistorial(portal="Energía"), 2, 50)
     assert total == 51
-    assert filas == [{"Fecha": FECHA, "Usuario": "", "Correo": "a@ejemplo.com", "Portal": "Energía", "Resultado": "OK"}]
+    assert filas == [{
+        "Fecha": FECHA, "Usuario": "", "Correo": "a@ejemplo.com", "Portal": "Energía", "Resultado": "OK",
+        "FinalSesion": FECHA + timedelta(minutes=5), "TiempoSesionSeg": 300, "EnCurso": True,
+        "CierreExplicito": False,
+    }]
     (sql_total, p_total), (sql_filas, p_filas) = cur.ejecutados
+    assert "FinalSesion, TiempoSesionSeg, ISNULL(EnCurso, 0) AS EnCurso" in sql_filas
+    assert "ISNULL(CierreExplicito, 0) AS CierreExplicito" in sql_filas
     assert "core.vHistorialAccesos WHERE Portal = ?" in sql_total and p_total == ("Energía",)
     assert "ORDER BY Fecha DESC" in sql_filas and "OFFSET ? ROWS FETCH NEXT ? ROWS ONLY" in sql_filas
     assert p_filas == ("Energía", 50, 50)
@@ -433,13 +510,40 @@ def test_db_listar_historial_offset_y_usuario_nulo(cursor_falso):
 
 def test_db_resumen_historial(cursor_falso):
     cursor_falso["cursor"] = cur = CursorFalso(
-        uno=[(5, 2, 3, 2, 1)], todos=[[(date(2026, 10, 20), 4), (date(2026, 10, 21), 1)]]
+        uno=[(5, 2, 3, 2, 1, 1500, 3000, 1500, 2, 1)], todos=[[(date(2026, 10, 20), 4), (date(2026, 10, 21), 1)]]
     )
     r = db.resumen_historial(db.FiltrosHistorial(resultado="OK"), -180)
     assert r == {
         "total": 5, "usuariosUnicos": 2, "porPortal": {"Energía": 3, "MiraStock": 2}, "denegados": 1,
+        "tiempoPromedioSeg": 1500, "tiempoTotalSeg": {"Energía": 3000, "MiraStock": 1500}, "enCurso": 2,
+        "cerradasBoton": 1,
         "porDia": [{"dia": "2026-10-20", "total": 4}, {"dia": "2026-10-21", "total": 1}],
     }
+    sql_totales = cur.ejecutados[0][0]
+    assert "AVG(CAST(TiempoSesionSeg AS BIGINT))" in sql_totales
+    assert "SUM(CASE WHEN EnCurso = 1 THEN 1 ELSE 0 END)" in sql_totales
+    assert "SUM(CASE WHEN CierreExplicito = 1 THEN 1 ELSE 0 END)" in sql_totales
     sql_dias, p_dias = cur.ejecutados[1]
     assert "DATEADD(minute, ?, Fecha)" in sql_dias and "GROUP BY Dia" in sql_dias
     assert p_dias == (-180, "OK")
+
+
+def test_db_resumen_sin_latidos_promedio_nulo(cursor_falso):
+    cursor_falso["cursor"] = CursorFalso(uno=[(0, 0, 0, 0, 0, None, 0, 0, 0, 0)], todos=[[]])
+    r = db.resumen_historial(db.FiltrosHistorial(), 0)
+    assert r["tiempoPromedioSeg"] is None and r["tiempoTotalSeg"] == {"Energía": 0, "MiraStock": 0}
+
+
+@pytest.mark.parametrize("ruta", PAGINAS)
+def test_paginas_con_cache_busting_v9(cliente_admin, ruta):
+    texto = cliente_admin.get(ruta).text
+    assert 'href="/static/styles.css?v=9"' in texto
+    assert '.js"' not in texto and "?v=8" not in texto  # todo archivo local lleva ?v=9
+
+
+def test_historial_columnas_e_indicadores_de_sesion(cliente_admin):
+    texto = cliente_admin.get("/historial").text
+    for marca in ("Final de sesión", "Tiempo de sesión", 'id="i-promedio"', 'id="i-tiempo-energia"',
+                  'id="i-tiempo-mirastock"', 'id="i-en-curso"', '<th scope="col">Cierre</th>',
+                  'id="i-cerradas-boton"'):
+        assert marca in texto

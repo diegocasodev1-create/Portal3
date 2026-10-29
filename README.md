@@ -84,7 +84,8 @@ az containerapp update -n $APP -g $RG --set-env-vars "AUTH_ENABLED=true"
 | `DELETE /api/usuarios/{id}` | Elimina en SQL y luego la cuenta de acceso (un admin no puede eliminarse a sí mismo). → `{mensaje, avisoCuenta}` |
 | `POST /api/usuarios/{id}/enviar-correo` | Asegura la cuenta de acceso y envía o reenvía el correo de bienvenida (ver abajo) |
 | `GET /api/historial` | Historial de accesos, 50 por página (Fecha desc). Filtros más `pagina`. → `{filas, total, pagina, tamano, paginas}` |
-| `GET /api/historial/resumen` | Indicadores con los mismos filtros más `tz_offset_min`. → `{total, usuariosUnicos, porPortal, denegados, porDia}` |
+| `GET /api/historial/resumen` | Indicadores con los mismos filtros más `tz_offset_min`. → `{total, usuariosUnicos, porPortal, denegados, tiempoPromedioSeg, tiempoTotalSeg, enCurso, cerradasBoton, porDia}` |
+| `POST /api/latido` | **Público** (CORS para `LATIDO_ORIGINS`). Latido de sesión de Energía o MiraStock (ver "Latidos de sesión"). → 204 |
 | `GET /api/historial/csv` | CSV con los mismos filtros, sin paginar (tope 50.000 filas) |
 
 Los errores siempre vienen como `{"detail": "mensaje en español"}`. `avisoCuenta: true` indica que la operación en
@@ -104,6 +105,10 @@ app**: los administra el usuario.
 | `Usuario` | Nombre + Apellido; vacío si el correo no está en `UsuariosEntel` (la tabla muestra «—») |
 | `Portal` | `Energía` o `MiraStock` |
 | `Resultado` | `OK` o `Denegado` |
+| `FinalSesion` | `DATETIME2(0)` UTC del último latido; NULL si la sesión no envió latidos |
+| `TiempoSesionSeg` | `FinalSesion − Fecha` en segundos; NULL sin latidos |
+| `EnCurso` | `BIT`: 1 si el último latido tiene menos de 5 minutos (0 si la sesión se cerró con botón) |
+| `CierreExplicito` | `BIT`: 1 si la sesión se cerró con «Atrás» o «Cerrar sesión» |
 
 **Filtros** (todos opcionales, los mismos en los tres endpoints):
 
@@ -119,13 +124,24 @@ app**: los administra el usuario.
 Un valor inválido responde **422** `{"detail", "errores": {campo: mensaje}}` con todos los campos con error. Las
 fechas de la respuesta vienen en ISO 8601 UTC con `Z` (`2026-10-28T14:05:00Z`).
 
+Cada fila de `/api/historial` trae además `FinalSesion` (ISO UTC o `null`), `TiempoSesionSeg` (entero o `null`),
+`EnCurso` (bool) y `CierreExplicito` (bool). El resumen agrega `tiempoPromedioSeg` (promedio de las filas con tiempo; `null` si no hay
+ninguna), `tiempoTotalSeg: {"Energía", "MiraStock"}` (suma en segundos de las filas con tiempo) `enCurso`
+(cantidad de filas con `EnCurso = 1`) y `cerradasBoton` (cantidad de filas con `CierreExplicito = 1`).
+
+La tabla de `/historial` muestra «Final de sesión» (hora local `dd/mm/aaaa hh:mm`, la etiqueta «En curso» o «—») y
+«Tiempo de sesión» («< 1 min», «44 min», «1 h 05 min» o «—»; los minutos se truncan) y «Cierre»: «Botón» si
+`CierreExplicito = 1`, «En curso» si `EnCurso = 1`, «Inactividad» si hay `FinalSesion`, y «—» si no hubo latidos.
+
 La página `/historial` convierte los días locales del navegador a UTC: «Desde» es ese día a las 00:00 locales y
 «Hasta» es el **día siguiente** a las 00:00 locales (así incluye el día completo). Envía
 `tz_offset_min = -new Date().getTimezoneOffset()`. Por defecto muestra los últimos 7 días. Si el rango cruza un
 cambio de horario, la agrupación por día usa un solo desfase (puede correrse 1 h en ese día).
 
 **CSV** («Exportar a Excel»): UTF-8 con BOM, separador `;`, fin de línea CRLF. Columnas `Fecha (UTC)`
-(`AAAA-MM-DD hh:mm:ss`), Usuario, Correo, Portal y Resultado. Una celda que empieza con `=`, `+`, `-`, `@`, tabulador
+(`AAAA-MM-DD hh:mm:ss`), Usuario, Correo, Portal, Resultado, `Final de sesión (UTC)` (`AAAA-MM-DD hh:mm:ss`) y
+`Tiempo de sesión (min)` (minutos enteros truncados; vacío sin latidos) y `Cierre` (los mismos textos que la tabla,
+vacío en lugar de «—»). Una celda que empieza con `=`, `+`, `-`, `@`, tabulador
 o retorno de carro lleva una `'` adelante (para que Excel no la ejecute como fórmula). El archivo se llama
 `historial_accesos_AAAAMMDD.csv` (fecha UTC). Si hay más de 50.000 filas, trae las más recientes y el header
 `X-Historial-Truncado: 50000`; la interfaz lo avisa.
@@ -215,6 +231,53 @@ La plantilla incluye el saludo, los portales habilitados, el botón «Ingresar a
 registro) y el pie.
 
 El correo **no lleva adjuntos** (desde la v5). La guía en PDF de `app/docs/` ya no se envía.
+
+## Latidos de sesión
+
+`POST /api/latido` lo llaman los JS de Power Pages de Energía y MiraStock (cada 2 minutos y al cerrar la pestaña)
+para medir cuánto dura cada sesión. Es **público**: no usa `require_admin` ni cookies, y no exige el header
+`X-Requested-With` (la autorización va en el body). Esos JS, los flujos, las tablas y la vista los administra el
+usuario, no esta app.
+
+- **Body:** JSON de hasta 8 KB, con `Content-Type: application/json` o `text/plain` (para `navigator.sendBeacon`).
+  - MiraStock: `{"tipo": "mirastock", "t": "<guid de core.SesionesAgente.Token>"}`
+  - Energía: `{"tipo": "energia", "token": "<token de /_services/auth/token del sitio Energía>"}`
+  - Campo opcional `"cierre": true` en los dos: el usuario cerró con «Atrás» o «Cerrar sesión» (MiraStock lo manda
+    con `sendBeacon`). Si falta o es `false`, es un latido normal; cualquier otro valor (`null`, `"true"`, `1`…) → 400.
+- **MiraStock:** `UPDATE core.SesionesAgente SET FinalSesion = SYSUTCDATETIME()` de esa llave si se creó hace menos
+  de 12 h y no está cerrada (`COALESCE(CierreExplicito, 0) = 0`). Se acepta aunque ya pasó su `ExpiraEn` (eso solo
+  controla la entrada al chat).
+- **MiraStock con cierre:** sin la regla de 60 s, pone `FinalSesion = SYSUTCDATETIME()`, `CierreExplicito = 1` y
+  adelanta `ExpiraEn` a ahora si estaba en el futuro: la llave queda anulada y el agente ya no la acepta. Una sesión ya
+  cerrada no se vuelve a cerrar.
+- **Energía:** el token se valida como en `/auth/portal` (RS256, `exp`, emisor), pero con la clave pública de
+  `ENERGIA_PORTAL_URL` (cacheada aparte) y sin `TOKEN_AUDIENCE`. Con el correo del token, en una sola transacción
+  con `UPDLOCK, HOLDLOCK`:
+  - toma la fila **más reciente** de `core.HistorialAccesos` de ese correo, `Portal = 'Energía'`,
+    `Resultado = 'OK'` y `COALESCE(FinalSesion, Fecha)` de los últimos 30 minutos, esté abierta o cerrada;
+  - si está abierta, actualiza su `FinalSesion`;
+  - si está cerrada con botón hace 60 s o más, o no hay fila (entró directo por URL o volvió después de 30
+    minutos), inserta una fila `OK` con `Fecha = FinalSesion = SYSUTCDATETIME()`;
+  - si se cerró hace menos de 60 s, ignora el latido (uno que venía en camino al momento del cierre).
+- **Energía con cierre:** si esa fila más reciente está abierta, pone `FinalSesion = SYSUTCDATETIME()` y
+  `CierreExplicito = 1`. Si ya estaba cerrada o no hay fila, no hace nada (nunca inserta).
+- **Regla de 60 s:** si el latido anterior llegó hace menos de 60 segundos, `FinalSesion` no se reescribe (no aplica
+  al cierre).
+- **Respuestas:** 204 si el latido es válido, aunque no actualice nada (así no revela si una llave existe); 400 si
+  el body es inválido; 401 si el token de Energía no valida; 503 si falla la BD o no se puede descargar la clave
+  pública de Energía.
+- **CORS** (solo en esta ruta): orígenes de `LATIDO_ORIGINS`, solo `POST`, header `Content-Type`, sin credenciales,
+  preflight cacheado 10 min. Un preflight o un POST con un `Origin` no permitido responde 403. El resto de la API
+  sigue sin CORS.
+- **Logs:** la llave y el token nunca se registran, y `/api/latido` no aparece en el access log de uvicorn.
+
+| Variable | Por defecto |
+|---|---|
+| `ENERGIA_PORTAL_URL` | `https://portalenergia.powerappsportals.com` |
+| `LATIDO_ORIGINS` | `https://portalenergia.powerappsportals.com,https://site-oaciopruebas2.powerappsportals.com` |
+
+Mientras alguien tenga abierto Energía o MiraStock, los latidos mantienen activa una réplica del Container App (ver
+"Costo mensual estimado").
 
 ## Estructura
 
@@ -309,7 +372,7 @@ Luego usa `SQL_USER=mira_admin_app` y esa clave en el Container App.
 | Suscripción | CreditosCopilot1 (`38b3f030-c7b5-4d38-822b-c533f88cd34a`) |
 | Container App | `ca-mira-admin` en `RG-COPILOT-DEV`, East US |
 | Environment (reutilizado) | `managedEnvironment-rgscripth25prod-818f` (`rg-script-h25-prod`, East US) |
-| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v7` (revisión `ca-mira-admin--0000009`, 2026-10-28) |
+| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v8` (revisión `ca-mira-admin--0000010`, 2026-10-29) |
 | Recursos | 0.25 vCPU, 0.5 GiB, réplicas mín. 0 / máx. 1, ingress externo solo HTTPS (HTTP redirige) |
 | Pull de la imagen | Usuario admin del ACR (guardado como secret del Container App). Con rol Contributor no se puede asignar `AcrPull` a una identidad administrada |
 | Secrets | `sql-password`, `session-secret`, `graph-client-secret` (secreto de la app "Portal Externo - Envio de correos"), `extid-client-secret` (secreto de la app de External ID) |
@@ -419,7 +482,7 @@ No se crearon recursos con costo fijo nuevo: el environment, el registro, el ser
 
 | Recurso | Costo adicional estimado |
 |---|---|
-| Container App `ca-mira-admin` (consumo, 0.25 vCPU / 0.5 GiB, mín. 0 réplicas) | **US$0–3/mes**. Solo cobra mientras hay una réplica activa. Ejemplo: 100 h activas al mes ≈ 90.000 vCPU·s + 180.000 GiB·s, dentro de la cuota gratuita mensual de la suscripción (180.000 vCPU·s, 360.000 GiB·s y 2 millones de requests). Esa cuota la comparten todos los Container Apps de la suscripción; sin ella serían ≈ US$2,70 |
+| Container App `ca-mira-admin` (consumo, 0.25 vCPU / 0.5 GiB, mín. 0 réplicas) | **US$0–3/mes**. Solo cobra mientras hay una réplica activa. Ejemplo: 100 h activas al mes ≈ 90.000 vCPU·s + 180.000 GiB·s, dentro de la cuota gratuita mensual de la suscripción (180.000 vCPU·s, 360.000 GiB·s y 2 millones de requests). Esa cuota la comparten todos los Container Apps de la suscripción; sin ella serían ≈ US$2,70. Desde la v8, los latidos de Energía y MiraStock mantienen la réplica activa mientras alguien use esos portales, así que las horas activas crecen |
 | Environment `managedEnvironment-rgscripth25prod-818f` | US$0 adicional (ya existía) |
 | ACR `acrscripth25prod` (Basic) | US$0 adicional. Ya se paga (≈ US$5/mes); la imagen ocupa una parte mínima de los 10 GB incluidos. Cada `az acr build` cuesta centavos |
 | Logs (Log Analytics del environment) | ≈ US$0. Pocos MB al mes con `LOG_LEVEL=INFO` |

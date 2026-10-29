@@ -7,9 +7,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/styles.css">
-  <script src="/static/comun.js" defer></script>
-  <script src="/static/historial.js" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=9">
+  <script src="/static/comun.js?v=9" defer></script>
+  <script src="/static/historial.js?v=9" defer></script>
 </head>
 <body data-portal-url="{{PORTAL_URL}}">
   <a class="saltar" href="#contenido">Saltar al contenido</a>
@@ -87,6 +87,26 @@
         <span class="indicador-nombre">Denegados</span>
         <span class="indicador-valor" id="i-denegados">—</span>
       </div>
+      <div class="card indicador">
+        <span class="indicador-nombre">Tiempo promedio de sesión</span>
+        <span class="indicador-valor" id="i-promedio">—</span>
+      </div>
+      <div class="card indicador">
+        <span class="indicador-nombre">Tiempo total en Energía</span>
+        <span class="indicador-valor" id="i-tiempo-energia">—</span>
+      </div>
+      <div class="card indicador">
+        <span class="indicador-nombre">Tiempo total en MiraStock</span>
+        <span class="indicador-valor" id="i-tiempo-mirastock">—</span>
+      </div>
+      <div class="card indicador indicador-en-curso">
+        <span class="indicador-nombre">Sesiones en curso</span>
+        <span class="indicador-valor" id="i-en-curso">—</span>
+      </div>
+      <div class="card indicador">
+        <span class="indicador-nombre">Cerradas con botón</span>
+        <span class="indicador-valor" id="i-cerradas-boton">—</span>
+      </div>
     </section>
 
     <section class="card card-grafico" aria-labelledby="titulo-grafico">
@@ -119,6 +139,9 @@
             <th scope="col">Correo</th>
             <th scope="col">Portal</th>
             <th scope="col">Resultado</th>
+            <th scope="col">Final de sesión</th>
+            <th scope="col">Tiempo de sesión</th>
+            <th scope="col">Cierre</th>
           </tr>
         </thead>
         <tbody id="tabla-cuerpo"></tbody>

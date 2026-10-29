@@ -310,6 +310,9 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
 
 .chip-ok { background: rgba(61, 220, 151, 0.14); color: var(--exito); border: 1px solid rgba(61, 220, 151, 0.45); }
 .chip-denegado { background: rgba(255, 107, 122, 0.14); color: var(--peligro); border: 1px solid rgba(255, 107, 122, 0.45); }
+.chip-en-curso { background: rgba(41, 184, 236, 0.16); color: var(--acento-suave); border: 1px solid var(--borde); }
+.indicador-en-curso .indicador-valor { color: var(--acento-suave); }
+.td-tiempo { white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 .paginacion {
   display: flex; align-items: center; justify-content: center; gap: 14px;

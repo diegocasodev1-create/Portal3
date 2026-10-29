@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     portal_base_url: str = "https://miragroup-portal-externo.powerappsportals.com"
     token_audience: str | None = None
 
+    # Sitio Energía (Power Pages): su clave pública valida los tokens de los latidos de Energía.
+    energia_portal_url: str = "https://portalenergia.powerappsportals.com"
+    # Orígenes (separados por coma) que pueden llamar a POST /api/latido desde el navegador.
+    latido_origins: str = (
+        "https://portalenergia.powerappsportals.com,https://site-oaciopruebas2.powerappsportals.com"
+    )
+
     # Temporal: con False la app no pide ingreso y /api/* no exige sesión (el código de auth se mantiene).
     auth_enabled: bool = True
 
@@ -47,7 +54,7 @@ class Settings(BaseSettings):
             return None
         return v.strip()
 
-    @field_validator("portal_base_url")
+    @field_validator("portal_base_url", "energia_portal_url")
     @classmethod
     def _sin_barra_final(cls, v: str) -> str:
         return v.strip().rstrip("/")
@@ -62,6 +69,14 @@ class Settings(BaseSettings):
     @property
     def portal_host(self) -> str:
         return (urlparse(self.portal_base_url).hostname or "").lower()
+
+    @property
+    def energia_host(self) -> str:
+        return (urlparse(self.energia_portal_url).hostname or "").lower()
+
+    @property
+    def latido_origenes(self) -> frozenset[str]:
+        return frozenset(o.strip().rstrip("/").lower() for o in self.latido_origins.split(",") if o.strip())
 
     @property
     def session_max_age_s(self) -> int:
