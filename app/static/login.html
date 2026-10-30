@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ingresar | Portal de administración MiraGroup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/styles.css?v=13">
+  <script src="/static/comun.js?v=13" defer></script>
+  <script src="/static/login.js?v=13" defer></script>
+</head>
+<body class="pagina-simple">
+  <main class="card card-aviso card-ingreso">
+    <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+    <h1>Portal de administración</h1>
+    <p>Ingresa con tu correo de MiraGroup y tu contraseña de administrador.</p>
+
+    <form id="form-ingreso" class="form-ingreso" novalidate>
+      <p class="error-general" id="error-general" role="alert" hidden></p>
+      <div class="campo">
+        <label for="f-correo">Correo</label>
+        <input type="email" id="f-correo" name="correo" maxlength="256" autocomplete="username" required>
+      </div>
+      <div class="campo">
+        <label for="f-contrasena">Contraseña</label>
+        <input type="password" id="f-contrasena" name="contrasena" maxlength="128" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primario btn-ancho" id="btn-ingresar">Ingresar</button>
+    </form>
+    <p class="nota">¿Olvidaste tu contraseña? Pide a TI que la restablezca.</p>
+  </main>
+</body>
+</html>

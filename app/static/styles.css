@@ -119,7 +119,7 @@ a { color: var(--acento-suave); }
 .marca { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .logo { height: 40px; width: auto; display: block; }
 .sesion { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.admin-correo { color: var(--texto-2); font-size: 0.9rem; margin-right: 6px; overflow-wrap: anywhere; }
+.admin-nombre { color: var(--texto-2); font-size: 0.9rem; margin-right: 6px; overflow-wrap: anywhere; }
 .nav-inicio { display: flex; flex-wrap: wrap; gap: 10px; margin-right: auto; }
 
 /* ---------- Contenido ---------- */
@@ -138,7 +138,7 @@ a { color: var(--acento-suave); }
 .campo label, .campo legend { font-size: 0.85rem; font-weight: 500; color: var(--texto-2); }
 .req { color: var(--acento); }
 
-input[type="text"], input[type="email"], input[type="search"], input[type="date"], select {
+input[type="text"], input[type="email"], input[type="password"], input[type="search"], input[type="date"], select {
   width: 100%; min-height: 40px; padding: 8px 14px;
   font: inherit; color: var(--texto);
   background: rgba(3, 8, 20, 0.7);
@@ -363,6 +363,73 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
 .ayuda-medidas { display: block; font-size: 0.74rem; font-weight: 400; color: var(--texto-2); cursor: help; }
 .tabla tfoot td { font-weight: 700; border-top: 1px solid var(--borde); background: rgba(41, 184, 236, 0.06); }
 
+/* ---------- Ingreso y cambio de contraseña ---------- */
+
+.card-ingreso { max-width: 420px; text-align: left; }
+.card-ingreso .logo { margin: 0 auto 20px; }
+.card-ingreso h1, .card-ingreso > p { text-align: center; }
+.form-ingreso { margin-top: 8px; }
+.form-ingreso .error-general { margin-bottom: 14px; }
+.btn-ancho { width: 100%; margin-top: 6px; }
+.nota { color: var(--texto-2); font-size: 0.85rem; }
+.card-ingreso .nota { margin: 18px 0 0; text-align: center; }
+
+.card-formulario { max-width: 520px; margin: 4vh auto 0; padding: 26px 28px; }
+.card-formulario h2 { margin-bottom: 12px; }
+.aviso-cambio {
+  padding: 10px 14px; border-radius: 12px;
+  background: rgba(255, 196, 87, 0.1); border: 1px solid rgba(255, 196, 87, 0.45); color: #ffe1a6;
+}
+#form-cambio .error-general { margin-bottom: 14px; }
+
+.reglas { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 4px; font-size: 0.85rem; color: var(--texto-2); }
+.reglas li::before { content: "○"; display: inline-block; width: 1.4em; color: var(--texto-2); }
+.reglas li.cumple { color: var(--texto); }
+.reglas li.cumple::before { content: "✓"; color: var(--exito); }
+
+/* Botón «ojo» para mostrar u ocultar la contraseña (lo agrega comun.js dentro de cada input[type="password"]) */
+.campo-clave { position: relative; display: block; }
+.campo-clave input { padding-right: 48px; }
+.btn-ojo {
+  position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; padding: 0; border: 0; border-radius: 10px;
+  background: transparent; color: var(--texto-2); cursor: pointer;
+}
+.btn-ojo:hover { color: var(--texto); background: rgba(169, 188, 212, 0.1); }
+.btn-ojo:focus-visible { outline: 2px solid var(--acento-suave); outline-offset: 0; }
+.btn-ojo svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.btn-ojo .ojo-tachado { display: none; }
+.btn-ojo[aria-pressed="true"] .ojo-tachado { display: inline; }
+
+/* ---------- Centro de administración principal: cards de administradores ---------- */
+
+.cabecera-seccion { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; margin-bottom: 6px; }
+.cabecera-seccion .resumen { padding: 0; margin: 0; }
+.admins {
+  list-style: none; margin: 16px 0 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px;
+}
+.card-admin {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; height: 100%;
+  padding: 20px 22px; font: inherit; color: var(--texto); text-align: left; cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s, background-color 0.15s;
+}
+.card-admin:hover:not(:disabled) { border-color: var(--acento); background: rgba(10, 26, 51, 0.9); transform: translateY(-2px); }
+.card-admin:disabled { cursor: not-allowed; opacity: 0.65; }
+.admin-cabecera { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.admin-titulo { font-size: 1.1rem; font-weight: 600; }
+.admin-correo-card { color: var(--acento-suave); font-size: 0.9rem; overflow-wrap: anywhere; }
+.admin-dato { display: flex; flex-direction: column; font-size: 0.88rem; }
+.admin-dato-nombre { color: var(--texto-2); font-size: 0.78rem; }
+.chip-estado { margin-top: auto; }
+.chip-activo { background: rgba(61, 220, 151, 0.14); color: var(--exito); border: 1px solid rgba(61, 220, 151, 0.45); }
+.chip-bloqueado { background: rgba(255, 196, 87, 0.12); color: var(--aviso); border: 1px solid rgba(255, 196, 87, 0.5); }
+.chip-inactivo { background: transparent; color: rgba(169, 188, 212, 0.8); border: 1px solid var(--borde-suave); }
+#modal-ficha .error-general, #modal-verificar .error-general { margin-bottom: 14px; }
+#verificar-texto strong { color: var(--acento-suave); }
+@media (prefers-reduced-motion: reduce) { .card-admin:hover:not(:disabled) { transform: none; } }
+
 /* ---------- Responsive: la tabla pasa a tarjetas ---------- */
 
 @media (max-width: 900px) {
@@ -413,6 +480,6 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
   .indicador { padding: 12px 14px; }
   .indicador-valor { font-size: 1.5rem; }
   .sesion .btn { flex: 1 1 auto; }
-  .admin-correo { width: 100%; }
+  .admin-nombre { width: 100%; }
   .acciones .btn { flex: 1 1 auto; }
 }

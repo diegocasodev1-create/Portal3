@@ -2,11 +2,13 @@
 "use strict";
 
 (() => {
-  const PORTAL_URL = document.body.dataset.portalUrl || "/";
   const CORREO_RE = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
+  // Cliente sugerido según el dominio del correo (mismo criterio con que se completó la columna en la BD).
+  const CLIENTES = ["Entel", "MiraGroup", "Otro"];
+  const CLIENTE_POR_DOMINIO = { "entel.pe": "Entel", "miragroup.cl": "MiraGroup" };
+
   const estado = {
-    admin: "",        // vacío cuando AUTH_ENABLED=false (no hay usuario identificado)
     iniciado: false,  // /api/me respondió bien
     usuarios: [],
     gerencias: [],
@@ -52,11 +54,12 @@
     const detail = (datos && typeof datos.detail === "string") ? datos.detail : "Ocurrió un error inesperado.";
 
     if (resp.status === 401) {
-      mostrarBloqueo("sesion");
+      mostrarBloqueo();
       throw new ErrorApi(401, detail);
     }
-    if (resp.status === 403 && /permisos/i.test(detail)) {
-      mostrarBloqueo("permisos");
+    if (resp.status === 403 && datos && datos.cambioRequerido) {
+      // Entró con la contraseña por defecto: primero debe cambiarla.
+      window.location.href = "/cambiar-contrasena";
       throw new ErrorApi(403, detail);
     }
     if (!resp.ok) {
@@ -116,16 +119,10 @@
     return (texto || "").toString().normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
   }
 
-  function mostrarBloqueo(motivo) {
+  // Sesión vencida o administrador desactivado: se tapa la página y se ofrece volver a ingresar.
+  function mostrarBloqueo() {
     const bloqueo = $("bloqueo");
     if (!bloqueo.hidden) return;
-    if (motivo === "permisos") {
-      $("bloqueo-titulo").textContent = "No tienes permisos de administrador";
-      $("bloqueo-texto").textContent = "Tu usuario ya no tiene habilitada la Administración de usuarios.";
-    } else {
-      $("bloqueo-titulo").textContent = "Tu sesión venció";
-      $("bloqueo-texto").textContent = "Tu sesión venció, vuelve a ingresar desde el Portal Corporativo.";
-    }
     for (const id of ["modal-usuario", "modal-eliminar"]) $(id).hidden = true;
     modalActivo = null;
     document.querySelector(".encabezado").inert = true;
@@ -218,7 +215,6 @@
   }
 
   function filaUsuario(u) {
-    const esYo = u.Correo === estado.admin;
     const nombreCompleto = `${u.Nombre} ${u.Apellido || ""}`.trim();
     const btnEditar = el("button", {
       type: "button", class: "btn btn-chico btn-secundario", text: "Editar",
@@ -232,17 +228,15 @@
     });
     const btnEliminar = el("button", {
       type: "button", class: "btn btn-chico btn-peligro", text: "Eliminar",
-      dataset: { accion: "eliminar", id: u.Id },
-      "aria-label": esYo ? "No puedes eliminar tu propio usuario" : `Eliminar a ${u.Correo}`,
-      title: esYo ? "No puedes eliminar tu propio usuario" : null,
-      disabled: esYo,
+      dataset: { accion: "eliminar", id: u.Id }, "aria-label": `Eliminar a ${u.Correo}`,
     });
 
     return el("tr", null, [
-      celda("Correo", [document.createTextNode(u.Correo), esYo ? el("span", { class: "etiqueta-yo", text: "tú" }) : null], "td-correo"),
+      celda("Correo", u.Correo, "td-correo"),
       celda("Nombre", u.Nombre),
       celda("Apellido", u.Apellido || "—"),
       celda("Gerencia", u.Gerencia || "—"),
+      celda("Cliente", u.Cliente || "—"),
       celda("Energía", chip(u.Portal1), "td-centro"),
       celda("MiraStock", chip(u.Portal2), "td-centro"),
       celda("Admin", chip(u.Portal3), "td-centro"),
@@ -262,10 +256,12 @@
   function usuariosFiltrados() {
     const texto = normalizarBusqueda($("buscar").value.trim());
     const portal = $("filtro-portal").value;
+    const cliente = $("filtro-cliente").value;
     return estado.usuarios.filter((u) => {
       if (portal && !u[portal]) return false;
+      if (cliente && u.Cliente !== cliente) return false;
       if (!texto) return true;
-      return [u.Correo, u.Nombre, u.Apellido, u.Gerencia].some((v) => normalizarBusqueda(v).includes(texto));
+      return [u.Correo, u.Nombre, u.Apellido, u.Gerencia, u.Cliente].some((v) => normalizarBusqueda(v).includes(texto));
     });
   }
 
@@ -323,6 +319,7 @@
     nombre: { error: "e-nombre", input: "f-nombre" },
     apellido: { error: "e-apellido", input: "f-apellido" },
     gerencia: { error: "e-gerencia", input: "f-gerencia" },
+    cliente: { error: "e-cliente", input: "f-cliente" },
     portales: { error: "e-portales", input: null },
     portal1: { error: "e-portales", input: null },
     portal2: { error: "e-portales", input: null },
@@ -376,6 +373,7 @@
       nombre: $("f-nombre").value.trim(),
       apellido: $("f-apellido").value.trim(),
       gerencia: $("f-gerencia").value,
+      cliente: $("f-cliente").value,
       portal1: $("f-portal1").checked,
       portal2: $("f-portal2").checked,
       portal3: $("f-portal3").checked,
@@ -393,12 +391,23 @@
     if (!datos.nombre) errores.nombre = "El nombre es obligatorio.";
     if (!datos.gerencia) errores.gerencia = "La gerencia es obligatoria.";
     else if (!estado.gerencias.includes(datos.gerencia)) errores.gerencia = "La gerencia seleccionada no es válida.";
+    if (!datos.cliente) errores.cliente = "El cliente es obligatorio.";
+    else if (!CLIENTES.includes(datos.cliente)) errores.cliente = "El cliente debe ser Entel, MiraGroup u Otro.";
     if (!datos.portal1 && !datos.portal2 && !datos.portal3) errores.portales = "Debes marcar al menos un portal.";
-    else if (!creando && estado.editando && estado.editando.Correo === estado.admin && !datos.portal3) {
-      errores.portal3 = "No puedes quitarte tu propio acceso a Administración de usuarios.";
-    }
     return errores;
   }
+
+  function clienteSugerido(correo) {
+    const dominio = correo.trim().toLowerCase().split("@")[1] || "";
+    return CLIENTE_POR_DOMINIO[dominio] || "Otro";
+  }
+
+  // Al crear, el cliente sigue al dominio del correo hasta que el administrador lo elige a mano.
+  $("f-correo").addEventListener("input", () => {
+    if (estado.editando || $("f-cliente").dataset.manual === "1") return;
+    $("f-cliente").value = $("f-correo").value.includes("@") ? clienteSugerido($("f-correo").value) : "";
+  });
+  $("f-cliente").addEventListener("change", () => { $("f-cliente").dataset.manual = "1"; });
 
   async function abrirFormulario(usuario, disparador) {
     if (!estado.gerenciasCargadas) {
@@ -423,6 +432,8 @@
     $("f-nombre").value = creando ? "" : usuario.Nombre;
     $("f-apellido").value = creando ? "" : (usuario.Apellido || "");
     llenarGerencias(creando ? "" : usuario.Gerencia);
+    $("f-cliente").value = creando ? "" : (CLIENTES.includes(usuario.Cliente) ? usuario.Cliente : "");
+    $("f-cliente").dataset.manual = "";
     $("f-portal1").checked = !creando && usuario.Portal1;
     $("f-portal2").checked = !creando && usuario.Portal2;
     $("f-portal3").checked = !creando && usuario.Portal3;
@@ -551,36 +562,32 @@
 
   $("buscar").addEventListener("input", renderLista);
   $("filtro-portal").addEventListener("change", renderLista);
+  $("filtro-cliente").addEventListener("change", renderLista);
   $("btn-nuevo").addEventListener("click", (ev) => abrirFormulario(null, ev.currentTarget));
   $("btn-reintentar").addEventListener("click", () => (estado.iniciado ? cargarUsuarios() : iniciar()));
 
   $("btn-logout").addEventListener("click", async (ev) => {
     setOcupado(ev.currentTarget, true, "Cerrando…");
     try {
-      await fetch("/auth/logout", {
+      await fetch("/api/auth/logout", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json", "X-Requested-With": "mira-admin" },
         body: "{}",
       });
     } catch (e) {
-      // Aunque falle la red, se envía al usuario al portal.
+      // Aunque falle la red, se vuelve al ingreso.
     }
-    window.location.href = PORTAL_URL;
+    window.location.href = "/login";
   });
 
   async function iniciar() {
     mostrarEstadoLista("carga");
     try {
       const me = await api("GET", "/api/me");
-      estado.admin = me.correo || "";
       estado.iniciado = true;
-      if (me.authEnabled === false) {
-        // Sin inicio de sesión: se ocultan el correo del admin, «Volver al portal» y «Cerrar sesión».
-        document.querySelector(".sesion").hidden = true;
-      } else {
-        $("admin-correo").textContent = me.correo;
-      }
+      $("admin-nombre").textContent = me.nombre;
+      $("admin-nombre").title = me.correo;
     } catch (e) {
       if (e.status === 401 || e.status === 403) return;
       $("texto-error").textContent = e.message;

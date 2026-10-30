@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Centro de administración principal | MiraGroup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/styles.css?v=13">
+  <script src="/static/comun.js?v=13" defer></script>
+  <script src="/static/administradores.js?v=13" defer></script>
+</head>
+<body>
+  <a class="saltar" href="#contenido">Saltar al contenido</a>
+
+  <header class="encabezado">
+    <div class="marca">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h1>Centro de administración principal</h1>
+    </div>
+    <nav class="nav-inicio" aria-label="Navegación">
+      <a class="btn btn-fantasma" href="/">← Inicio</a>
+    </nav>
+    <div class="sesion">
+      <span class="admin-nombre" id="admin-nombre" aria-label="Administrador conectado"></span>
+      <button type="button" class="btn btn-fantasma" id="btn-logout">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <main id="contenido" class="contenido">
+    <section aria-labelledby="titulo-admins">
+      <div class="cabecera-seccion">
+        <h2 id="titulo-admins">Administradores</h2>
+        <p class="resumen" id="resumen" aria-live="polite"></p>
+      </div>
+      <p class="nota">Para editar a un administrador, elige su card e ingresa <strong>su</strong> contraseña. Las altas, bajas y restablecimientos se hacen por SQL.</p>
+
+      <div id="estado-carga" class="estado" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span>Cargando administradores…</span>
+      </div>
+      <div id="estado-vacio" class="estado" hidden>
+        <p>No hay administradores registrados.</p>
+      </div>
+      <div id="estado-error" class="estado estado-error" role="alert" hidden>
+        <p id="texto-error">No se pudieron cargar los administradores.</p>
+        <button type="button" class="btn btn-secundario" id="btn-reintentar">Reintentar</button>
+      </div>
+
+      <ul class="admins" id="lista-admins" hidden></ul>
+    </section>
+  </main>
+
+  <!-- Pantalla de sesión vencida -->
+  <div class="bloqueo" id="bloqueo" hidden>
+    <div class="card card-aviso" role="alertdialog" aria-modal="true" aria-labelledby="bloqueo-titulo" aria-describedby="bloqueo-texto">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h2 id="bloqueo-titulo">Tu sesión venció</h2>
+      <p id="bloqueo-texto">Por seguridad, vuelve a ingresar con tu correo y contraseña.</p>
+      <a class="btn btn-primario" href="/login" id="bloqueo-link">Ingresar</a>
+    </div>
+  </div>
+
+  <!-- Modal: contraseña del administrador elegido -->
+  <div class="modal-fondo" id="modal-verificar" hidden>
+    <div class="modal modal-chico card" role="dialog" aria-modal="true" aria-labelledby="verificar-titulo" aria-describedby="verificar-texto">
+      <form id="form-verificar" novalidate>
+        <div class="modal-cabecera">
+          <h2 id="verificar-titulo">Confirmar identidad</h2>
+          <button type="button" class="btn-cerrar" data-cerrar aria-label="Cerrar">×</button>
+        </div>
+        <p id="verificar-texto">Ingresa la contraseña de <strong id="verificar-nombre"></strong> para abrir su ficha.</p>
+        <p class="error-general" id="verificar-error-general" role="alert" hidden></p>
+        <div class="campo">
+          <label for="v-contrasena">Contraseña <span class="req" aria-hidden="true">*</span></label>
+          <input type="password" id="v-contrasena" name="contrasena" maxlength="128" autocomplete="off" required aria-describedby="e-contrasena">
+          <p class="error-campo" id="e-contrasena"></p>
+        </div>
+        <div class="modal-acciones">
+          <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+          <button type="submit" class="btn btn-primario" id="btn-verificar">Continuar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: ficha del administrador -->
+  <div class="modal-fondo" id="modal-ficha" hidden>
+    <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="ficha-titulo">
+      <form id="form-ficha" novalidate>
+        <div class="modal-cabecera">
+          <h2 id="ficha-titulo">Ficha del administrador</h2>
+          <button type="button" class="btn-cerrar" data-cerrar aria-label="Cerrar">×</button>
+        </div>
+        <p class="nota" id="ficha-vence" aria-live="off"></p>
+        <p class="error-general" id="ficha-error-general" role="alert" hidden></p>
+
+        <div class="campo">
+          <label for="a-nombre">Nombre <span class="req" aria-hidden="true">*</span></label>
+          <input type="text" id="a-nombre" name="nombre" maxlength="150" autocomplete="off" required aria-describedby="e-nombre">
+          <p class="error-campo" id="e-nombre"></p>
+        </div>
+        <div class="campo">
+          <label for="a-correo">Correo <span class="req" aria-hidden="true">*</span></label>
+          <input type="email" id="a-correo" name="correo" maxlength="256" autocomplete="off" required aria-describedby="e-correo">
+          <p class="error-campo" id="e-correo"></p>
+        </div>
+
+        <fieldset class="campo portales">
+          <legend>Contraseña nueva (opcional)</legend>
+          <div class="campo">
+            <label for="a-nueva">Contraseña nueva</label>
+            <input type="password" id="a-nueva" name="nuevaContrasena" maxlength="128" autocomplete="new-password" aria-describedby="reglas e-nuevaContrasena">
+            <p class="error-campo" id="e-nuevaContrasena"></p>
+          </div>
+          <div class="campo">
+            <label for="a-confirmacion">Repite la contraseña nueva</label>
+            <input type="password" id="a-confirmacion" name="confirmacion" maxlength="128" autocomplete="new-password" aria-describedby="e-confirmacion">
+            <p class="error-campo" id="e-confirmacion"></p>
+          </div>
+          <ul class="reglas" id="reglas" aria-label="Requisitos de la contraseña">
+            <li data-regla="largo">Al menos 10 caracteres</li>
+            <li data-regla="mayuscula">Una mayúscula</li>
+            <li data-regla="minuscula">Una minúscula</li>
+            <li data-regla="numero">Un número</li>
+            <li data-regla="simbolo">Un símbolo (por ejemplo ! @ # $ %)</li>
+            <li data-regla="distinta">Distinta de la contraseña por defecto y de la actual</li>
+          </ul>
+        </fieldset>
+
+        <div class="modal-acciones">
+          <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+          <button type="submit" class="btn btn-primario" id="btn-guardar">Guardar cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>

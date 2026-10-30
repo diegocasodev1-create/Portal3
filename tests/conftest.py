@@ -1,4 +1,4 @@
-"""Fixtures comunes: configuración de prueba, BD simulada, clave del portal y clientes HTTP."""
+"""Fixtures comunes: configuración de prueba, BD simulada (con administradores), clave de Energía y clientes HTTP."""
 
 import os
 
@@ -13,7 +13,6 @@ os.environ.update(
         "PORTAL_BASE_URL": "https://portal.ejemplo.com",
         "ENERGIA_PORTAL_URL": "https://energia.ejemplo.com",
         "LATIDO_ORIGINS": "https://energia.ejemplo.com, https://mirastock.ejemplo.com/",
-        "TOKEN_AUDIENCE": "",
         "SESSION_SECRET": "secreto-de-prueba-" + "x" * 48,
         "SESSION_MAX_AGE_MIN": "60",
         "GRAPH_TENANT_ID": "tenant-de-prueba",
@@ -39,14 +38,16 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
-from app import auth, db, externalid, mailer
-from app.config import get_settings
+from app import auth, claves, db, externalid, mailer
 from app.main import app
 
 ADMIN = "admin@ejemplo.com"
-EMISOR = "portal.ejemplo.com"
+CLAVE_ADMIN = "Clave#Segura2026"
+EMISOR = "otro-sitio.ejemplo.com"
 EMISOR_ENERGIA = "energia.ejemplo.com"
 CSRF = {"X-Requested-With": "mira-admin"}
+# PBKDF2 con 600.000 iteraciones haría lentísimos los tests: se bajan (test_claves comprueba el valor real).
+ITERACIONES_TEST = 1_000
 
 
 def _nueva_clave():
@@ -89,14 +90,17 @@ class BDFalsa:
         self.accesos: list[dict] = []  # core.HistorialAccesos
         self.llamadas_latido: list[tuple] = []
         self.agregar(ADMIN, "Ana", "Admin", "Gerencia TI", p3=True)
+        # core.AdministradoresPortal: el admin de los tests (Id 1) ya cambió su contraseña (PBKDF2).
+        self.admins: dict[int, dict] = {}
+        self.agregar_admin(ADMIN, "Ana Admin", CLAVE_ADMIN)
 
     def agregar(self, correo, nombre="Nombre", apellido="", gerencia="Gerencia TI",
-                p1=False, p2=False, p3=False, activo=True, invitacion=False):
+                p1=False, p2=False, p3=False, activo=True, invitacion=False, cliente="Otro"):
         uid = self._siguiente
         self._siguiente += 1
         self.usuarios[uid] = {
             "Id": uid, "Correo": correo, "Nombre": nombre, "Apellido": apellido, "Gerencia": gerencia,
-            "Portal1": p1, "Portal2": p2, "Portal3": p3, "Activo": activo,
+            "Cliente": cliente, "Portal1": p1, "Portal2": p2, "Portal3": p3, "Activo": activo,
             "InvitacionEnviada": invitacion,
             "FechaAlta": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         }
@@ -105,11 +109,82 @@ class BDFalsa:
     def _por_correo(self, correo):
         return next((u for u in self.usuarios.values() if u["Correo"].lower() == correo.lower()), None)
 
-    # --- funciones de app.db ---
-    def es_admin(self, correo):
-        u = self._por_correo(correo)
-        return bool(u and u["Portal3"] and u["Activo"])
+    # --- administradores (core.AdministradoresPortal); el reloj es bd.ahora, como SYSUTCDATETIME() ---
+    def agregar_admin(self, correo, nombre="Admin", clave=CLAVE_ADMIN, algoritmo=claves.ALGORITMO_APP,
+                      debe_cambiar=False, activo=True, intentos=0, bloqueado_hasta=None,
+                      ultimo_acceso=None, fecha_cambio=None, fecha_alta=None):
+        aid = max(self.admins, default=0) + 1
+        sal = bytes([aid]) * 32
+        self.admins[aid] = {
+            "Id": aid, "Nombre": nombre, "Correo": correo,
+            "ContrasenaHash": claves.calcular(algoritmo, clave, sal), "ContrasenaSal": sal, "AlgoritmoHash": algoritmo,
+            "DebeCambiarContrasena": debe_cambiar, "Activo": activo, "IntentosFallidos": intentos,
+            "BloqueadoHasta": bloqueado_hasta, "UltimoAcceso": ultimo_acceso,
+            "FechaCambioContrasena": fecha_cambio, "FechaAlta": fecha_alta or self.ahora - timedelta(hours=1),
+        }
+        return aid
 
+    def _vista_admin(self, a):
+        base = a["FechaCambioContrasena"] or a["FechaAlta"]
+        return {
+            **{k: v for k, v in a.items() if k not in ("FechaCambioContrasena", "FechaAlta")},
+            "Bloqueado": bool(a["BloqueadoHasta"] and a["BloqueadoHasta"] > self.ahora),
+            "PorDefectoVencida": base + timedelta(hours=db.HORAS_CONTRASENA_POR_DEFECTO) < self.ahora,
+        }
+
+    def obtener_admin(self, aid):
+        a = self.admins.get(aid)
+        return self._vista_admin(a) if a else None
+
+    def obtener_admin_por_correo(self, correo):
+        a = next((a for a in self.admins.values() if a["Correo"] == correo), None)
+        return self._vista_admin(a) if a else None
+
+    def listar_admins(self):
+        return [
+            {k: v[k] for k in ("Id", "Nombre", "Correo", "Activo", "UltimoAcceso", "BloqueadoHasta", "Bloqueado")}
+            for v in sorted((self._vista_admin(a) for a in self.admins.values()), key=lambda a: (a["Nombre"], a["Correo"]))
+        ]
+
+    def registrar_fallo_admin(self, aid):
+        a = self.admins[aid]
+        if a["BloqueadoHasta"] and a["BloqueadoHasta"] > self.ahora:
+            return
+        if a["BloqueadoHasta"]:  # bloqueo anterior vencido: la cuenta empieza de nuevo
+            a["IntentosFallidos"], a["BloqueadoHasta"] = 1, None
+            return
+        a["IntentosFallidos"] += 1
+        if a["IntentosFallidos"] >= db.INTENTOS_PARA_BLOQUEO:
+            a["BloqueadoHasta"] = self.ahora + timedelta(minutes=db.MINUTOS_BLOQUEO)
+
+    def registrar_exito_admin(self, aid, es_ingreso):
+        a = self.admins[aid]
+        a["IntentosFallidos"], a["BloqueadoHasta"] = 0, None
+        if es_ingreso:
+            a["UltimoAcceso"] = self.ahora
+
+    def cambiar_contrasena_admin(self, aid, hash_, sal, algoritmo):
+        self.admins[aid].update(
+            ContrasenaHash=hash_, ContrasenaSal=sal, AlgoritmoHash=algoritmo, DebeCambiarContrasena=False,
+            FechaCambioContrasena=self.ahora, IntentosFallidos=0, BloqueadoHasta=None,
+        )
+
+    def migrar_hash_admin(self, aid, hash_anterior, hash_, sal, algoritmo):
+        a = self.admins[aid]
+        if a["ContrasenaHash"] != hash_anterior or a["DebeCambiarContrasena"]:
+            return False
+        a.update(ContrasenaHash=hash_, ContrasenaSal=sal, AlgoritmoHash=algoritmo)
+        return True
+
+    def actualizar_admin(self, aid, nombre, correo):
+        if aid not in self.admins:
+            return False
+        if any(a["Correo"] == correo for i, a in self.admins.items() if i != aid):
+            raise db.CorreoDuplicado()
+        self.admins[aid].update(Nombre=nombre, Correo=correo)
+        return True
+
+    # --- funciones de app.db ---
     def listar_gerencias(self):
         return sorted(self.gerencias)
 
@@ -129,16 +204,16 @@ class BDFalsa:
     def existe_correo(self, correo):
         return self._por_correo(correo) is not None
 
-    def crear_usuario(self, correo, nombre, apellido, gerencia, p1, p2, p3):
+    def crear_usuario(self, correo, nombre, apellido, gerencia, cliente, p1, p2, p3):
         if self._por_correo(correo):
             raise db.CorreoDuplicado()
-        return self.agregar(correo, nombre, apellido, gerencia, p1, p2, p3)
+        return self.agregar(correo, nombre, apellido, gerencia, p1, p2, p3, cliente=cliente)
 
-    def actualizar_usuario(self, uid, nombre, apellido, gerencia, p1, p2, p3):
+    def actualizar_usuario(self, uid, nombre, apellido, gerencia, cliente, p1, p2, p3):
         u = self.usuarios.get(uid)
         if not u:
             return False
-        u.update(Nombre=nombre, Apellido=apellido, Gerencia=gerencia, Portal1=p1, Portal2=p2, Portal3=p3)
+        u.update(Nombre=nombre, Apellido=apellido, Gerencia=gerencia, Cliente=cliente, Portal1=p1, Portal2=p2, Portal3=p3)
         return True
 
     def eliminar_usuario(self, uid):
@@ -346,11 +421,26 @@ class BDFalsa:
         return filas[:tope], len(filas) > tope
 
 
+@pytest.fixture(autouse=True)
+def iteraciones_rapidas(monkeypatch):
+    monkeypatch.setattr(claves, "ITERACIONES_PBKDF2", ITERACIONES_TEST)
+
+
+@pytest.fixture(autouse=True)
+def sin_limite_previo():
+    """Cada test empieza sin intentos registrados en el límite por IP."""
+    auth.limite_intentos.limpiar()
+    yield
+    auth.limite_intentos.limpiar()
+
+
 @pytest.fixture
-def bd(monkeypatch):
+def bd(monkeypatch, iteraciones_rapidas):
     falsa = BDFalsa()
     for nombre in (
-        "es_admin", "listar_gerencias", "listar_usuarios", "obtener_usuario", "existe_correo",
+        "obtener_admin", "obtener_admin_por_correo", "listar_admins", "registrar_fallo_admin",
+        "registrar_exito_admin", "cambiar_contrasena_admin", "migrar_hash_admin", "actualizar_admin",
+        "listar_gerencias", "listar_usuarios", "obtener_usuario", "existe_correo",
         "crear_usuario", "actualizar_usuario", "eliminar_usuario", "marcar_invitacion_enviada",
         "listar_usuarios_con_acceso", "listar_historial", "resumen_historial",
         "estadisticas_portales", "estadisticas_usuarios",
@@ -359,22 +449,6 @@ def bd(monkeypatch):
     ):
         monkeypatch.setattr(db, nombre, getattr(falsa, nombre))
     return falsa
-
-
-@pytest.fixture(autouse=True)
-def clave_del_portal(monkeypatch):
-    """Por defecto el portal entrega CLAVE_PUBLICA. Los tests pueden cambiar `estado['claves']`."""
-    estado = {"claves": [CLAVE_PUBLICA], "descargas": 0}
-
-    def descargar():
-        i = min(estado["descargas"], len(estado["claves"]) - 1)
-        estado["descargas"] += 1
-        return estado["claves"][i]
-
-    auth.clave_portal.limpiar()
-    monkeypatch.setattr(auth.clave_portal, "_descargar", descargar)
-    yield estado
-    auth.clave_portal.limpiar()
 
 
 @pytest.fixture(autouse=True)
@@ -462,19 +536,18 @@ def cliente(bd):
         yield c
 
 
-@pytest.fixture
-def sin_auth(monkeypatch):
-    """Simula AUTH_ENABLED=false (por defecto los tests corren con la autenticación activa)."""
-    monkeypatch.setattr(get_settings(), "auth_enabled", False)
+def poner_sesion(cliente, admin):
+    """Cookie de sesión firmada para `admin` (fila de bd.admins), sin pasar por el login."""
+    cliente.cookies.set(
+        auth.COOKIE_SESION, auth._serializador().dumps(auth.datos_sesion(admin)), domain="testserver.local", path="/"
+    )
+
+
+def ingresar(cliente, correo=ADMIN, contrasena=CLAVE_ADMIN, **params):
+    return cliente.post("/api/auth/login", json={"correo": correo, "contrasena": contrasena}, headers=CSRF, params=params)
 
 
 @pytest.fixture
-def cliente_sin_auth(sin_auth, cliente):
-    return cliente
-
-
-@pytest.fixture
-def cliente_admin(cliente):
-    resp = cliente.post("/auth/portal", data={"token": crear_token()}, follow_redirects=False)
-    assert resp.status_code == 303
+def cliente_admin(cliente, bd):
+    poner_sesion(cliente, bd.admins[1])
     return cliente

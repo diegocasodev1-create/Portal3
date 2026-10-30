@@ -7,10 +7,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/styles.css?v=11">
-  <script src="/static/app.js?v=11" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=13">
+  <script src="/static/app.js?v=13" defer></script>
 </head>
-<body data-portal-url="{{PORTAL_URL}}">
+<body>
   <a class="saltar" href="#contenido">Saltar al contenido</a>
 
   <header class="encabezado">
@@ -22,8 +22,7 @@
       <a class="btn btn-fantasma" href="/">← Inicio</a>
     </nav>
     <div class="sesion">
-      <span class="admin-correo" id="admin-correo" aria-label="Administrador conectado"></span>
-      <a class="btn btn-secundario" href="{{PORTAL_URL}}">Volver al portal</a>
+      <span class="admin-nombre" id="admin-nombre" aria-label="Administrador conectado"></span>
       <button type="button" class="btn btn-fantasma" id="btn-logout">Cerrar sesión</button>
     </div>
   </header>
@@ -32,7 +31,7 @@
     <section class="barra card" aria-label="Búsqueda y filtros">
       <div class="campo campo-buscar">
         <label for="buscar">Buscar</label>
-        <input type="search" id="buscar" placeholder="Correo, nombre, apellido o gerencia" autocomplete="off">
+        <input type="search" id="buscar" placeholder="Correo, nombre, apellido, gerencia o cliente" autocomplete="off">
       </div>
       <div class="campo">
         <label for="filtro-portal">Portal</label>
@@ -41,6 +40,15 @@
           <option value="Portal1">Energía</option>
           <option value="Portal2">MiraStock</option>
           <option value="Portal3">Administración</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label for="filtro-cliente">Cliente</label>
+        <select id="filtro-cliente">
+          <option value="">Todos</option>
+          <option value="Entel">Entel</option>
+          <option value="MiraGroup">MiraGroup</option>
+          <option value="Otro">Otro</option>
         </select>
       </div>
       <button type="button" class="btn btn-primario" id="btn-nuevo">+ Nuevo usuario</button>
@@ -69,6 +77,7 @@
             <th scope="col">Nombre</th>
             <th scope="col">Apellido</th>
             <th scope="col">Gerencia</th>
+            <th scope="col">Cliente</th>
             <th scope="col">Energía</th>
             <th scope="col">MiraStock</th>
             <th scope="col">Admin</th>
@@ -82,13 +91,13 @@
     </section>
   </main>
 
-  <!-- Pantalla de sesión vencida / sin permisos -->
+  <!-- Pantalla de sesión vencida -->
   <div class="bloqueo" id="bloqueo" hidden>
     <div class="card card-aviso" role="alertdialog" aria-modal="true" aria-labelledby="bloqueo-titulo" aria-describedby="bloqueo-texto">
       <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
       <h2 id="bloqueo-titulo">Tu sesión venció</h2>
-      <p id="bloqueo-texto">Vuelve a ingresar desde el Portal Corporativo.</p>
-      <a class="btn btn-primario" href="{{PORTAL_URL}}" id="bloqueo-link">Ir al Portal Corporativo</a>
+      <p id="bloqueo-texto">Por seguridad, vuelve a ingresar con tu correo y contraseña.</p>
+      <a class="btn btn-primario" href="/login" id="bloqueo-link">Ingresar</a>
     </div>
   </div>
 
@@ -126,6 +135,16 @@
             <option value="">Selecciona una gerencia</option>
           </select>
           <p class="error-campo" id="e-gerencia"></p>
+        </div>
+        <div class="campo">
+          <label for="f-cliente">Cliente <span class="req" aria-hidden="true">*</span></label>
+          <select id="f-cliente" name="cliente" required aria-describedby="e-cliente">
+            <option value="">Selecciona un cliente</option>
+            <option value="Entel">Entel</option>
+            <option value="MiraGroup">MiraGroup</option>
+            <option value="Otro">Otro</option>
+          </select>
+          <p class="error-campo" id="e-cliente"></p>
         </div>
         <fieldset class="campo portales" aria-describedby="e-portales">
           <legend>Portales habilitados <span class="req" aria-hidden="true">*</span></legend>

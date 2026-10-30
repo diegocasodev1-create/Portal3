@@ -5,6 +5,15 @@ Tipos reales (INFORMATION_SCHEMA.COLUMNS):
   Nombre nvarchar(100) NOT NULL | Apellido nvarchar(100) NOT NULL | Gerencia nvarchar(150) NULL
   Portal1/Portal2 bit NOT NULL default 0 | Activo bit NOT NULL default 1
   FechaAlta datetime2 NOT NULL default sysutcdatetime() | Portal3/InvitacionEnviada bit NULL
+  Cliente nvarchar(100) NOT NULL default 'Otro' ('Entel' | 'MiraGroup' | 'Otro'; v12)
+  Portal3 ya no da acceso a esta app (v12): es solo un dato. El acceso lo da core.AdministradoresPortal.
+
+Tabla core.AdministradoresPortal (la crea y la mantiene el usuario; los administradores se crean por SQL):
+  Id int PK | Nombre nvarchar(150) | Correo nvarchar(256) único (UQ_AdministradoresPortal_Correo), minúsculas
+  ContrasenaHash varbinary(256) | ContrasenaSal varbinary(64) | AlgoritmoHash varchar(20) ('SHA2_512' | 'PBKDF2_SHA256')
+  DebeCambiarContrasena bit default 1 | Activo bit default 1 | IntentosFallidos int default 0
+  BloqueadoHasta / UltimoAcceso / FechaCambioContrasena datetime2 NULL (UTC) | FechaAlta datetime2 default sysutcdatetime()
+  sp_RestablecerContrasenaAdmin vuelve a la contraseña por defecto con DebeCambiarContrasena = 1.
 
 Vista core.vHistorialAccesos (solo lectura; la mantiene el usuario, no esta app):
   Fecha datetime2(0) en UTC | Correo (minúsculas) | Usuario (Nombre + Apellido; vacío o NULL si el
@@ -30,7 +39,7 @@ class CorreoDuplicado(Exception):
     """El correo ya existe en core.UsuariosEntel."""
 
 
-_COLUMNAS = """Id, Correo, Nombre, Apellido, Gerencia,
+_COLUMNAS = """Id, Correo, Nombre, Apellido, Gerencia, Cliente,
     ISNULL(Portal1, 0) AS Portal1, ISNULL(Portal2, 0) AS Portal2, ISNULL(Portal3, 0) AS Portal3,
     ISNULL(Activo, 0) AS Activo, ISNULL(InvitacionEnviada, 0) AS InvitacionEnviada, FechaAlta"""
 
@@ -72,17 +81,6 @@ def _fila(cursor: pyodbc.Cursor, row: pyodbc.Row) -> dict[str, Any]:
     d["Apellido"] = d["Apellido"] or ""
     d["FechaAlta"] = d["FechaAlta"].strftime("%Y-%m-%d") if d["FechaAlta"] else None
     return d
-
-
-def es_admin(correo: str) -> bool:
-    with _conexion() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT 1 FROM core.UsuariosEntel "
-            "WHERE Correo = ? AND ISNULL(Portal3, 0) = 1 AND ISNULL(Activo, 0) = 1",
-            correo,
-        )
-        return cur.fetchone() is not None
 
 
 def listar_gerencias() -> list[str]:
@@ -134,7 +132,7 @@ def existe_correo(correo: str) -> bool:
 
 
 def crear_usuario(
-    correo: str, nombre: str, apellido: str, gerencia: str, portal1: bool, portal2: bool, portal3: bool
+    correo: str, nombre: str, apellido: str, gerencia: str, cliente: str, portal1: bool, portal2: bool, portal3: bool
 ) -> dict[str, Any]:
     try:
         with _conexion() as conn:
@@ -142,10 +140,10 @@ def crear_usuario(
             cur.execute(
                 "SET NOCOUNT ON;"
                 " INSERT INTO core.UsuariosEntel"
-                " (Correo, Nombre, Apellido, Gerencia, Portal1, Portal2, Portal3, Activo, InvitacionEnviada)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0);"
+                " (Correo, Nombre, Apellido, Gerencia, Cliente, Portal1, Portal2, Portal3, Activo, InvitacionEnviada)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0);"
                 " SELECT CAST(SCOPE_IDENTITY() AS INT);",
-                correo, nombre, apellido, gerencia, portal1, portal2, portal3,
+                correo, nombre, apellido, gerencia, cliente, portal1, portal2, portal3,
             )
             nuevo_id = cur.fetchone()[0]
     except pyodbc.IntegrityError as e:
@@ -159,15 +157,15 @@ def crear_usuario(
 
 
 def actualizar_usuario(
-    usuario_id: int, nombre: str, apellido: str, gerencia: str, portal1: bool, portal2: bool, portal3: bool
+    usuario_id: int, nombre: str, apellido: str, gerencia: str, cliente: str, portal1: bool, portal2: bool, portal3: bool
 ) -> bool:
     with _conexion() as conn:
         cur = conn.cursor()
         cur.execute(
             "UPDATE core.UsuariosEntel"
-            " SET Nombre = ?, Apellido = ?, Gerencia = ?, Portal1 = ?, Portal2 = ?, Portal3 = ?"
+            " SET Nombre = ?, Apellido = ?, Gerencia = ?, Cliente = ?, Portal1 = ?, Portal2 = ?, Portal3 = ?"
             " WHERE Id = ?",
-            nombre, apellido, gerencia, portal1, portal2, portal3, usuario_id,
+            nombre, apellido, gerencia, cliente, portal1, portal2, portal3, usuario_id,
         )
         return cur.rowcount > 0
 
@@ -183,6 +181,134 @@ def marcar_invitacion_enviada(usuario_id: int) -> None:
     with _conexion() as conn:
         cur = conn.cursor()
         cur.execute("UPDATE core.UsuariosEntel SET InvitacionEnviada = 1 WHERE Id = ?", usuario_id)
+
+
+# ---------------------------------------------------------------------------
+# Administradores de Portal3 (core.AdministradoresPortal)
+# ---------------------------------------------------------------------------
+
+INTENTOS_PARA_BLOQUEO = 5
+MINUTOS_BLOQUEO = 15
+# La contraseña por defecto solo sirve estas horas desde el alta o el último restablecimiento.
+HORAS_CONTRASENA_POR_DEFECTO = 72
+
+# El reloj es el de SQL (SYSUTCDATETIME), igual que en los latidos: Bloqueado y PorDefectoVencida se calculan ahí.
+_COLUMNAS_ADMIN = f"""Id, Nombre, Correo, ContrasenaHash, ContrasenaSal, AlgoritmoHash,
+    ISNULL(DebeCambiarContrasena, 0) AS DebeCambiarContrasena, ISNULL(Activo, 0) AS Activo,
+    ISNULL(IntentosFallidos, 0) AS IntentosFallidos, BloqueadoHasta, UltimoAcceso,
+    CASE WHEN BloqueadoHasta > SYSUTCDATETIME() THEN 1 ELSE 0 END AS Bloqueado,
+    CASE WHEN DATEADD(HOUR, {HORAS_CONTRASENA_POR_DEFECTO}, COALESCE(FechaCambioContrasena, FechaAlta))
+        < SYSUTCDATETIME() THEN 1 ELSE 0 END AS PorDefectoVencida"""
+
+# Un fallo con el bloqueo anterior ya vencido empieza la cuenta de nuevo (si no, el primer error volvería a bloquear).
+# En un UPDATE, todas las expresiones de SET ven los valores previos de la fila.
+_SQL_FALLO_ADMIN = (
+    "UPDATE core.AdministradoresPortal SET"
+    " IntentosFallidos = CASE WHEN BloqueadoHasta <= SYSUTCDATETIME() THEN 1"
+    "  ELSE ISNULL(IntentosFallidos, 0) + 1 END,"
+    " BloqueadoHasta = CASE WHEN BloqueadoHasta <= SYSUTCDATETIME() THEN NULL"
+    f"  WHEN ISNULL(IntentosFallidos, 0) + 1 >= {INTENTOS_PARA_BLOQUEO}"
+    f"  THEN DATEADD(MINUTE, {MINUTOS_BLOQUEO}, SYSUTCDATETIME())"
+    "  ELSE BloqueadoHasta END"
+    " WHERE Id = ? AND (BloqueadoHasta IS NULL OR BloqueadoHasta <= SYSUTCDATETIME())"
+)
+
+
+def _fila_admin(cursor: pyodbc.Cursor, row: pyodbc.Row) -> dict[str, Any]:
+    d = {col[0]: valor for col, valor in zip(cursor.description, row)}
+    for campo in ("DebeCambiarContrasena", "Activo", "Bloqueado", "PorDefectoVencida"):
+        d[campo] = bool(d[campo])
+    d["ContrasenaHash"] = bytes(d["ContrasenaHash"] or b"")
+    d["ContrasenaSal"] = bytes(d["ContrasenaSal"] or b"")
+    return d
+
+
+def obtener_admin(admin_id: int) -> dict[str, Any] | None:
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT {_COLUMNAS_ADMIN} FROM core.AdministradoresPortal WHERE Id = ?", admin_id)
+        row = cur.fetchone()
+        return _fila_admin(cur, row) if row else None
+
+
+def obtener_admin_por_correo(correo: str) -> dict[str, Any] | None:
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT {_COLUMNAS_ADMIN} FROM core.AdministradoresPortal WHERE Correo = ?", correo)
+        row = cur.fetchone()
+        return _fila_admin(cur, row) if row else None
+
+
+def listar_admins() -> list[dict[str, Any]]:
+    """Todos los administradores (también los inactivos), sin hash ni sal."""
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT Id, Nombre, Correo, ISNULL(Activo, 0) AS Activo, UltimoAcceso, BloqueadoHasta,"
+            " CASE WHEN BloqueadoHasta > SYSUTCDATETIME() THEN 1 ELSE 0 END AS Bloqueado"
+            " FROM core.AdministradoresPortal ORDER BY Nombre, Correo"
+        )
+        filas = []
+        for row in cur.fetchall():
+            d = {col[0]: valor for col, valor in zip(cur.description, row)}
+            d["Activo"] = bool(d["Activo"])
+            d["Bloqueado"] = bool(d["Bloqueado"])
+            filas.append(d)
+        return filas
+
+
+def registrar_fallo_admin(admin_id: int) -> None:
+    """Suma un intento fallido; al llegar a INTENTOS_PARA_BLOQUEO bloquea MINUTOS_BLOQUEO minutos."""
+    with _conexion() as conn:
+        conn.cursor().execute(_SQL_FALLO_ADMIN, admin_id)
+
+
+def registrar_exito_admin(admin_id: int, es_ingreso: bool) -> None:
+    """Contraseña correcta: reinicia los intentos. UltimoAcceso solo cambia en el login (no en las cards)."""
+    with _conexion() as conn:
+        conn.cursor().execute(
+            "UPDATE core.AdministradoresPortal SET IntentosFallidos = 0, BloqueadoHasta = NULL"
+            + (", UltimoAcceso = SYSUTCDATETIME()" if es_ingreso else "")
+            + " WHERE Id = ?",
+            admin_id,
+        )
+
+
+def cambiar_contrasena_admin(admin_id: int, hash_: bytes, sal: bytes, algoritmo: str) -> None:
+    """Contraseña nueva elegida por el administrador: ya no debe cambiarla y se desbloquea."""
+    with _conexion() as conn:
+        conn.cursor().execute(
+            "UPDATE core.AdministradoresPortal SET ContrasenaHash = ?, ContrasenaSal = ?, AlgoritmoHash = ?,"
+            " DebeCambiarContrasena = 0, FechaCambioContrasena = SYSUTCDATETIME(),"
+            " IntentosFallidos = 0, BloqueadoHasta = NULL WHERE Id = ?",
+            pyodbc.Binary(hash_), pyodbc.Binary(sal), algoritmo, admin_id,
+        )
+
+
+def migrar_hash_admin(admin_id: int, hash_anterior: bytes, hash_: bytes, sal: bytes, algoritmo: str) -> bool:
+    """Pasa la misma contraseña a otro algoritmo. No toca nada si el hash cambió entretanto (p. ej. un restablecimiento)."""
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE core.AdministradoresPortal SET ContrasenaHash = ?, ContrasenaSal = ?, AlgoritmoHash = ?"
+            " WHERE Id = ? AND ContrasenaHash = ? AND ISNULL(DebeCambiarContrasena, 0) = 0",
+            pyodbc.Binary(hash_), pyodbc.Binary(sal), algoritmo, admin_id, pyodbc.Binary(hash_anterior),
+        )
+        return cur.rowcount > 0
+
+
+def actualizar_admin(admin_id: int, nombre: str, correo: str) -> bool:
+    try:
+        with _conexion() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE core.AdministradoresPortal SET Nombre = ?, Correo = ? WHERE Id = ?", nombre, correo, admin_id
+            )
+            return cur.rowcount > 0
+    except pyodbc.IntegrityError as e:
+        if "2627" in str(e) or "2601" in str(e):
+            raise CorreoDuplicado() from None
+        raise
 
 
 # ---------------------------------------------------------------------------

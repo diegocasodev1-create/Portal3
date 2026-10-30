@@ -216,9 +216,33 @@ def test_energia_clave_publica_no_disponible_503(cliente, bd, clave_de_energia):
     assert bd.llamadas_latido == []
 
 
-def test_energia_usa_su_propia_clave_y_no_la_del_portal(cliente, bd, clave_del_portal, clave_de_energia):
-    latir(cliente, energia())
-    assert clave_de_energia["descargas"] == 1 and clave_del_portal["descargas"] == 0
+def test_energia_clave_publica_se_cachea(cliente, bd, clave_de_energia):
+    for _ in range(3):
+        assert latir(cliente, energia()).status_code == 204
+    assert clave_de_energia["descargas"] == 1
+
+
+def test_energia_clave_rotada_se_recarga_una_vez(cliente, bd, clave_de_energia, monkeypatch):
+    # v12: estas pruebas de la validación del token estaban en /auth/portal, que ya no existe.
+    from app import auth
+    from tests.conftest import CLAVE_PUBLICA_ENERGIA, OTRA_CLAVE_PUBLICA
+
+    monkeypatch.setattr(auth, "_RECARGA_MINIMA_S", 0)
+    clave_de_energia["claves"] = [CLAVE_PUBLICA_ENERGIA, OTRA_CLAVE_PUBLICA]
+    token = crear_token_energia(clave=OTRA_CLAVE_PRIVADA, email=CORREO)
+    assert latir(cliente, energia(token)).status_code == 204
+    assert clave_de_energia["descargas"] == 2
+
+
+def test_energia_token_hs256_rechazado(cliente, bd):
+    # Confusión de algoritmo: solo se acepta RS256.
+    import time
+
+    import jwt
+
+    token = jwt.encode({"iss": "energia.ejemplo.com", "exp": int(time.time()) + 600, "email": CORREO},
+                       "cualquier-secreto-de-al-menos-32-bytes!!", algorithm="HS256")
+    assert latir(cliente, energia(token)).status_code == 401
 
 
 def test_energia_error_de_bd_503(cliente, monkeypatch):

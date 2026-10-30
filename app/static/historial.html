@@ -7,11 +7,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/styles.css?v=11">
-  <script src="/static/comun.js?v=11" defer></script>
-  <script src="/static/historial.js?v=11" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=13">
+  <script src="/static/comun.js?v=13" defer></script>
+  <script src="/static/historial.js?v=13" defer></script>
 </head>
-<body data-portal-url="{{PORTAL_URL}}">
+<body>
   <a class="saltar" href="#contenido">Saltar al contenido</a>
 
   <header class="encabezado">
@@ -24,8 +24,7 @@
       <a class="btn btn-fantasma" href="/estadisticas">Estadísticas</a>
     </nav>
     <div class="sesion">
-      <span class="admin-correo" id="admin-correo" aria-label="Administrador conectado"></span>
-      <a class="btn btn-secundario" href="{{PORTAL_URL}}">Volver al portal</a>
+      <span class="admin-nombre" id="admin-nombre" aria-label="Administrador conectado"></span>
       <button type="button" class="btn btn-fantasma" id="btn-logout">Cerrar sesión</button>
     </div>
   </header>
@@ -156,13 +155,13 @@
     </section>
   </main>
 
-  <!-- Pantalla de sesión vencida / sin permisos -->
+  <!-- Pantalla de sesión vencida -->
   <div class="bloqueo" id="bloqueo" hidden>
     <div class="card card-aviso" role="alertdialog" aria-modal="true" aria-labelledby="bloqueo-titulo" aria-describedby="bloqueo-texto">
       <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
       <h2 id="bloqueo-titulo">Tu sesión venció</h2>
-      <p id="bloqueo-texto">Vuelve a ingresar desde el Portal Corporativo.</p>
-      <a class="btn btn-primario" href="{{PORTAL_URL}}" id="bloqueo-link">Ir al Portal Corporativo</a>
+      <p id="bloqueo-texto">Por seguridad, vuelve a ingresar con tu correo y contraseña.</p>
+      <a class="btn btn-primario" href="/login" id="bloqueo-link">Ingresar</a>
     </div>
   </div>
 

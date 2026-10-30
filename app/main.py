@@ -1,4 +1,4 @@
-"""App FastAPI: middlewares de sesión y seguridad, rutas de autenticación, API y archivos estáticos."""
+"""App FastAPI: middlewares de sesión y seguridad, login propio, API y archivos estáticos."""
 
 import csv
 import io
@@ -10,19 +10,27 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from http import HTTPStatus
 from pathlib import Path
+from urllib.parse import quote
 
 import pyodbc
-from fastapi import Depends, FastAPI, Form, Query, Request
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app import auth, db, externalid, mailer
+from app import auth, claves, db, externalid, mailer
 from app.auth import require_admin
 from app.config import get_settings
-from app.schemas import UsuarioCrear, UsuarioEditar
+from app.schemas import (
+    AdministradorEditar,
+    CambioContrasena,
+    Ingreso,
+    UsuarioCrear,
+    UsuarioEditar,
+    VerificarAdministrador,
+)
 
 settings = get_settings()
 
@@ -48,8 +56,6 @@ class _SinLatidos(logging.Filter):
 
 
 logging.getLogger("uvicorn.access").addFilter(_SinLatidos())
-if not settings.auth_enabled:
-    log.warning("AUTH_ENABLED=false: la app no pide ingreso y /api/* no exige sesión.")
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -68,8 +74,6 @@ CSP = (
     "frame-ancestors 'none'"
 )
 
-MSG_SIN_SESION = "Ingresa desde el Portal Corporativo para administrar usuarios."
-MSG_TOKEN_INVALIDO = "No pudimos validar tu ingreso. Vuelve a entrar desde el Portal Corporativo."
 MSG_BD_NO_DISPONIBLE = "No se pudo verificar tu acceso en este momento. Intenta nuevamente en unos minutos."
 
 app = FastAPI(title="Administración de usuarios - MiraGroup", docs_url=None, redoc_url=None, openapi_url=None)
@@ -81,23 +85,21 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 # ---------------------------------------------------------------------------
 
 def _leer_plantilla(ruta: Path) -> str:
-    return ruta.read_text(encoding="utf-8").replace("{{PORTAL_URL}}", escape(settings.portal_base_url, quote=True))
+    return ruta.read_text(encoding="utf-8")
 
 
 _INICIO_HTML = _leer_plantilla(STATIC_DIR / "inicio.html")
 _CONTACTOS_HTML = _leer_plantilla(STATIC_DIR / "contactos.html")
 _HISTORIAL_HTML = _leer_plantilla(STATIC_DIR / "historial.html")
 _ESTADISTICAS_HTML = _leer_plantilla(STATIC_DIR / "estadisticas.html")
-_SIN_ACCESO_HTML = _leer_plantilla(TEMPLATES_DIR / "sin_acceso.html")
-_SIN_PERMISOS_HTML = _leer_plantilla(TEMPLATES_DIR / "sin_permisos.html")
+_ADMINISTRADORES_HTML = _leer_plantilla(STATIC_DIR / "administradores.html")
+_LOGIN_HTML = _leer_plantilla(STATIC_DIR / "login.html")
+_CAMBIAR_HTML = _leer_plantilla(STATIC_DIR / "cambiar-contrasena.html")
+_ERROR_HTML = _leer_plantilla(TEMPLATES_DIR / "error.html")
 
 
-def _pagina_sin_acceso(mensaje: str, status_code: int) -> HTMLResponse:
-    return HTMLResponse(_SIN_ACCESO_HTML.replace("{{MENSAJE}}", escape(mensaje)), status_code=status_code)
-
-
-def _pagina_sin_permisos() -> HTMLResponse:
-    return HTMLResponse(_SIN_PERMISOS_HTML, status_code=403)
+def _pagina_error(mensaje: str, status_code: int) -> HTMLResponse:
+    return HTMLResponse(_ERROR_HTML.replace("{{MENSAJE}}", escape(mensaje)), status_code=status_code)
 
 
 # ---------------------------------------------------------------------------
@@ -117,15 +119,19 @@ async def proteccion_csrf(request: Request, call_next):
 
 @app.middleware("http")
 async def sesion(request: Request, call_next):
-    # Sin autenticación no se lee ni se renueva la cookie.
-    correo = auth.leer_sesion(request) if settings.auth_enabled else None
-    request.state.correo = correo
+    # Solo se lee la firma de la cookie; el administrador se consulta en la BD en cada página o /api/*.
+    datos = auth.leer_sesion(request)
+    request.state.sesion = datos
+    request.state.admin = None
     response = await call_next(request)
-    # Expiración por inactividad: cada request válido renueva la cookie.
-    # /auth/* administra la cookie por su cuenta (nueva sesión o cierre).
+    # Expiración por inactividad: cada request válido renueva la cookie, salvo que la respuesta ya
+    # la cambie (login, logout, contraseña nueva o sesión inválida).
+    ya_la_cambia = any(
+        v.startswith(f"{auth.COOKIE_SESION}=") for v in response.headers.getlist("set-cookie")
+    )
     path = request.url.path
-    if correo and not path.startswith(("/auth/", "/static/")) and response.status_code not in (401, 403):
-        auth.crear_cookie_sesion(response, correo)
+    if datos and not ya_la_cambia and not path.startswith("/static/") and response.status_code not in (401, 403):
+        auth.crear_cookie_sesion(response, datos)
     return response
 
 
@@ -224,6 +230,11 @@ async def _error_validacion(request: Request, exc: RequestValidationError):
     return JSONResponse({"detail": detail, "errores": errores}, status_code=422)
 
 
+@app.exception_handler(auth.CambioContrasenaRequerido)
+async def _cambio_requerido(request: Request, exc: auth.CambioContrasenaRequerido):
+    return JSONResponse({"detail": auth.MSG_CAMBIO_REQUERIDO, "cambioRequerido": True}, status_code=403)
+
+
 @app.exception_handler(ErrorCampo)
 async def _error_campo(request: Request, exc: ErrorCampo):
     return JSONResponse({"detail": exc.mensaje, "errores": {exc.campo: exc.mensaje}}, status_code=exc.status_code)
@@ -252,7 +263,7 @@ async def _error_inesperado(request: Request, exc: Exception):
 
 
 # ---------------------------------------------------------------------------
-# Rutas públicas y de autenticación
+# Rutas públicas y páginas
 # ---------------------------------------------------------------------------
 
 @app.get("/health")
@@ -260,20 +271,36 @@ def health():
     return {"status": "ok"}
 
 
-def _pagina_protegida(request: Request, html: str) -> HTMLResponse:
-    """Con auth activa exige sesión y Portal3 = 1 y Activo = 1; con auth apagada sirve la página directo."""
-    if not settings.auth_enabled:
-        return HTMLResponse(html)
-    correo = request.state.correo
-    if not correo:
-        return _pagina_sin_acceso(MSG_SIN_SESION, 200)
+def _a_login(request: Request) -> RedirectResponse:
+    """303 a /login, recordando la página pedida para volver a ella después de ingresar."""
+    ruta = request.url.path
+    destino = "/login" if ruta == "/" else f"/login?siguiente={quote(ruta, safe='/')}"
+    return RedirectResponse(destino, status_code=303)
+
+
+def _admin_de_pagina(request: Request) -> dict | None:
+    """Administrador de la sesión para las páginas (deja request.state.admin listo). Puede lanzar pyodbc.Error."""
+    admin = auth.admin_de_sesion(request.state.sesion)
+    request.state.admin = admin
+    return admin
+
+
+def _pagina_protegida(request: Request, html: str) -> HTMLResponse | RedirectResponse:
+    """Sin sesión → /login; debe cambiar la contraseña → /cambiar-contrasena; si no, la página."""
+    if not request.state.sesion:
+        return _a_login(request)
     try:
-        es_admin = db.es_admin(correo)
+        admin = _admin_de_pagina(request)
     except pyodbc.Error as e:
-        log.error("Error de base de datos al verificar acceso: %s", e.args[:1])
-        return _pagina_sin_acceso(MSG_BD_NO_DISPONIBLE, 503)
-    if not es_admin:
-        return _pagina_sin_permisos()
+        log.error("Error de base de datos al verificar la sesión: %s", e.args[:1])
+        return _pagina_error(MSG_BD_NO_DISPONIBLE, 503)
+    if admin is None:
+        # Inactivo, eliminado o con otra contraseña: la cookie ya no sirve.
+        resp = _a_login(request)
+        auth.borrar_cookie_sesion(resp)
+        return resp
+    if admin["DebeCambiarContrasena"]:
+        return RedirectResponse("/cambiar-contrasena", status_code=303)
     return HTMLResponse(html)
 
 
@@ -297,36 +324,135 @@ def estadisticas(request: Request):
     return _pagina_protegida(request, _ESTADISTICAS_HTML)
 
 
-@app.post("/auth/portal")
-def auth_portal(token: str = Form("")):
+@app.get("/administradores", response_class=HTMLResponse)
+def administradores(request: Request):
+    return _pagina_protegida(request, _ADMINISTRADORES_HTML)
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login(request: Request):
+    # Con una sesión válida no tiene sentido el formulario: se sigue de largo.
+    if not request.state.sesion:
+        return HTMLResponse(_LOGIN_HTML)
     try:
-        correo = auth.validar_token_portal(token)
-    except auth.TokenInvalido as e:
-        log.warning("Token del portal rechazado: %s", e)
-        return _pagina_sin_acceso(MSG_TOKEN_INVALIDO, 401)
-
-    try:
-        es_admin = db.es_admin(correo)
-    except pyodbc.Error as e:
-        log.error("Error de base de datos al verificar acceso: %s", e.args[:1])
-        return _pagina_sin_acceso(MSG_BD_NO_DISPONIBLE, 503)
-
-    if not es_admin:
-        log.info("Ingreso rechazado: el usuario no tiene Portal3 activo")
-        resp = _pagina_sin_permisos()
-        auth.borrar_cookie_sesion(resp)
-        return resp
-
-    log.info("Ingreso desde el portal aceptado")
-    resp = RedirectResponse("/", status_code=303)
-    auth.crear_cookie_sesion(resp, correo)
+        admin = _admin_de_pagina(request)
+    except pyodbc.Error:
+        return HTMLResponse(_LOGIN_HTML)
+    if admin is not None:
+        return RedirectResponse("/cambiar-contrasena" if admin["DebeCambiarContrasena"] else "/", status_code=303)
+    resp = HTMLResponse(_LOGIN_HTML)
+    auth.borrar_cookie_sesion(resp)
     return resp
 
 
-@app.post("/auth/logout")
-def auth_logout():
-    resp = JSONResponse({"redirect": settings.portal_base_url})
+@app.get("/cambiar-contrasena", response_class=HTMLResponse)
+def cambiar_contrasena(request: Request):
+    if not request.state.sesion:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        admin = _admin_de_pagina(request)
+    except pyodbc.Error as e:
+        log.error("Error de base de datos al verificar la sesión: %s", e.args[:1])
+        return _pagina_error(MSG_BD_NO_DISPONIBLE, 503)
+    if admin is None:
+        resp = RedirectResponse("/login", status_code=303)
+        auth.borrar_cookie_sesion(resp)
+        return resp
+    return HTMLResponse(_CAMBIAR_HTML)
+
+
+# ---------------------------------------------------------------------------
+# Login, cierre de sesión y cambio de contraseña
+# ---------------------------------------------------------------------------
+
+MSG_CREDENCIALES = "Correo o contraseña incorrectos."
+MSG_DEMASIADOS_INTENTOS = "Demasiados intentos desde tu conexión. Espera unos minutos e intenta nuevamente."
+MSG_POR_DEFECTO_VENCIDA = (
+    "La contraseña por defecto venció. Pide que la restablezcan e ingresa dentro de las "
+    f"{db.HORAS_CONTRASENA_POR_DEFECTO} horas siguientes."
+)
+
+
+def _siguiente_seguro(siguiente: str | None) -> str:
+    """Solo rutas internas: evita usar /login para redirigir a otro sitio (//otro.com, /\\otro.com)."""
+    if not siguiente or not siguiente.startswith("/") or siguiente.startswith(("//", "/\\")):
+        return "/"
+    if any(c in siguiente for c in "\\\r\n\t") or siguiente.startswith(("/login", "/cambiar-contrasena", "/api/")):
+        return "/"
+    return siguiente
+
+
+def _controlar_intentos(request: Request) -> None:
+    if not auth.limite_intentos.permitir(auth.ip_cliente(request)):
+        log.warning("Límite de intentos por IP alcanzado en %s", request.url.path)
+        raise StarletteHTTPException(status_code=429, detail=MSG_DEMASIADOS_INTENTOS)
+
+
+@app.post("/api/auth/login")
+def api_login(request: Request, datos: Ingreso, siguiente: str | None = Query(None)):
+    _controlar_intentos(request)
+    try:
+        admin = auth.autenticar(datos.correo, datos.contrasena)
+    except auth.CredencialesInvalidas as e:
+        log.info("Ingreso rechazado: %s", e)
+        raise StarletteHTTPException(status_code=401, detail=MSG_CREDENCIALES) from None
+    except auth.ContrasenaPorDefectoVencida:
+        log.warning("Ingreso rechazado: contraseña por defecto vencida")
+        raise StarletteHTTPException(status_code=401, detail=MSG_POR_DEFECTO_VENCIDA) from None
+
+    log.info("Ingreso aceptado (administrador Id=%s)", admin["Id"])
+    destino = "/cambiar-contrasena" if admin["DebeCambiarContrasena"] else _siguiente_seguro(siguiente)
+    resp = JSONResponse({"redirect": destino, "debeCambiarContrasena": admin["DebeCambiarContrasena"]})
+    auth.crear_cookie_sesion(resp, auth.datos_sesion(admin))
+    return resp
+
+
+@app.post("/api/auth/logout")
+def api_logout():
+    resp = JSONResponse({"redirect": "/login"})
     auth.borrar_cookie_sesion(resp)
+    return resp
+
+
+MSG_IGUAL_A_LA_ACTUAL = "La contraseña nueva debe ser distinta de la actual."
+
+
+def _errores_contrasena_nueva(nueva: str, confirmacion: str) -> dict[str, str]:
+    """Política + confirmación. La comparación con la actual la hace cada endpoint después de verificar
+    la contraseña: antes serviría para adivinarla sin sumar intentos fallidos."""
+    errores: dict[str, str] = {}
+    mensaje = claves.error_politica(nueva)
+    if mensaje:
+        errores["nueva"] = mensaje
+    if nueva != confirmacion:
+        errores["confirmacion"] = "Las contraseñas no coinciden."
+    return errores
+
+
+@app.post("/api/auth/cambiar-contrasena")
+def api_cambiar_contrasena(datos: CambioContrasena, admin: dict = Depends(auth.require_sesion)):
+    errores: dict[str, str] = {}
+    if not datos.actual:
+        errores["actual"] = "Ingresa tu contraseña actual."
+    errores.update(_errores_contrasena_nueva(datos.nueva, datos.confirmacion))
+    if errores:
+        raise ErrorValidacion(errores)
+    try:
+        auth.comprobar_contrasena(admin, datos.actual, es_ingreso=False)
+    except auth.CredencialesInvalidas:
+        log.info("Cambio de contraseña rechazado: contraseña actual incorrecta (Id=%s)", admin["Id"])
+        raise ErrorCampo(422, "actual", "La contraseña actual no es correcta.") from None
+    except auth.ContrasenaPorDefectoVencida:
+        raise ErrorCampo(422, "actual", MSG_POR_DEFECTO_VENCIDA) from None
+    if datos.nueva == datos.actual:
+        raise ErrorCampo(422, "nueva", MSG_IGUAL_A_LA_ACTUAL)
+
+    hash_, sal, algoritmo = claves.nuevo_hash(datos.nueva)
+    db.cambiar_contrasena_admin(admin["Id"], hash_, sal, algoritmo)
+    log.info("Contraseña cambiada (administrador Id=%s)", admin["Id"])
+    resp = JSONResponse({"mensaje": "Contraseña actualizada.", "redirect": "/"})
+    # La cookie anterior queda inválida (otra huella): se emite una nueva para seguir conectado.
+    auth.crear_cookie_sesion(resp, {"id": admin["Id"], "h": auth.huella(hash_)})
     return resp
 
 
@@ -361,33 +487,36 @@ def _usuario_o_404(usuario_id: int) -> dict:
     return usuario
 
 
-# `admin` es None cuando AUTH_ENABLED=false (no hay usuario identificado).
-
 @app.get("/api/me")
-def api_me(admin: str | None = Depends(require_admin)):
-    if not settings.auth_enabled:
-        return {"correo": None, "authEnabled": False}
-    return {"correo": admin}
+def api_me(admin: dict = Depends(auth.require_sesion)):
+    # Responde aunque deba cambiar la contraseña: la página de cambio muestra el nombre.
+    return {
+        "id": admin["Id"],
+        "nombre": admin["Nombre"],
+        "correo": admin["Correo"],
+        "debeCambiarContrasena": admin["DebeCambiarContrasena"],
+    }
 
 
 @app.get("/api/gerencias")
-def api_gerencias(admin: str | None = Depends(require_admin)):
+def api_gerencias(admin: dict = Depends(require_admin)):
     return db.listar_gerencias()
 
 
 @app.get("/api/usuarios")
-def api_listar_usuarios(admin: str | None = Depends(require_admin)):
+def api_listar_usuarios(admin: dict = Depends(require_admin)):
     return db.listar_usuarios()
 
 
 @app.post("/api/usuarios", status_code=201)
-def api_crear_usuario(datos: UsuarioCrear, admin: str | None = Depends(require_admin)):
+def api_crear_usuario(datos: UsuarioCrear, admin: dict = Depends(require_admin)):
     gerencia = _gerencia_valida(datos.gerencia)
     if db.existe_correo(datos.correo):
         raise ErrorCampo(409, "correo", "Ese correo ya está registrado.")
     try:
         usuario = db.crear_usuario(
-            datos.correo, datos.nombre, datos.apellido, gerencia, datos.portal1, datos.portal2, datos.portal3
+            datos.correo, datos.nombre, datos.apellido, gerencia, datos.cliente,
+            datos.portal1, datos.portal2, datos.portal3,
         )
     except db.CorreoDuplicado:
         raise ErrorCampo(409, "correo", "Ese correo ya está registrado.") from None
@@ -408,13 +537,11 @@ def api_crear_usuario(datos: UsuarioCrear, admin: str | None = Depends(require_a
 
 
 @app.put("/api/usuarios/{usuario_id}")
-def api_editar_usuario(usuario_id: int, datos: UsuarioEditar, admin: str | None = Depends(require_admin)):
+def api_editar_usuario(usuario_id: int, datos: UsuarioEditar, admin: dict = Depends(require_admin)):
     actual = _usuario_o_404(usuario_id)
-    if admin and actual["Correo"].lower() == admin and not datos.portal3:
-        raise ErrorCampo(400, "portal3", "No puedes quitarte tu propio acceso a Administración de usuarios.")
     gerencia = _gerencia_valida(datos.gerencia)
     if not db.actualizar_usuario(
-        usuario_id, datos.nombre, datos.apellido, gerencia, datos.portal1, datos.portal2, datos.portal3
+        usuario_id, datos.nombre, datos.apellido, gerencia, datos.cliente, datos.portal1, datos.portal2, datos.portal3
     ):
         raise StarletteHTTPException(status_code=404, detail="Usuario no encontrado.")
     log.info("Usuario actualizado (Id=%s)", usuario_id)
@@ -432,10 +559,8 @@ def api_editar_usuario(usuario_id: int, datos: UsuarioEditar, admin: str | None 
 
 
 @app.delete("/api/usuarios/{usuario_id}")
-def api_eliminar_usuario(usuario_id: int, admin: str | None = Depends(require_admin)):
+def api_eliminar_usuario(usuario_id: int, admin: dict = Depends(require_admin)):
     actual = _usuario_o_404(usuario_id)
-    if admin and actual["Correo"].lower() == admin:
-        raise StarletteHTTPException(status_code=400, detail="No puedes eliminar tu propio usuario.")
     if not db.eliminar_usuario(usuario_id):
         raise StarletteHTTPException(status_code=404, detail="Usuario no encontrado.")
     log.info("Usuario eliminado (Id=%s)", usuario_id)
@@ -450,7 +575,7 @@ def api_eliminar_usuario(usuario_id: int, admin: str | None = Depends(require_ad
 
 
 @app.post("/api/usuarios/{usuario_id}/enviar-correo")
-def api_enviar_correo(usuario_id: int, admin: str | None = Depends(require_admin)):
+def api_enviar_correo(usuario_id: int, admin: dict = Depends(require_admin)):
     """Envía (o reenvía) el correo de bienvenida. Solo si sale bien marca InvitacionEnviada=1."""
     usuario = _usuario_o_404(usuario_id)
     # Sin cuenta de acceso el usuario no podría ingresar: no se envía el correo.
@@ -483,6 +608,129 @@ def api_enviar_correo(usuario_id: int, admin: str | None = Depends(require_admin
         # El correo ya salió: se informa el éxito igual para no inducir un reenvío duplicado.
         log.error("El correo se envió, pero no se pudo marcar InvitacionEnviada: %s", e.args[:1])
     return {"correoEnviado": True, "mensaje": f"Correo enviado a {usuario['Correo']}."}
+
+
+# ---------------------------------------------------------------------------
+# Centro de administración principal (/administradores)
+# ---------------------------------------------------------------------------
+
+MSG_PERMISO_VENCIDO = "El permiso de edición venció. Vuelve a ingresar la contraseña del administrador."
+
+
+def _estado_admin(a: dict) -> str:
+    if not a["Activo"]:
+        return "inactivo"
+    return "bloqueado" if a["Bloqueado"] else "activo"
+
+
+def _admin_json(a: dict, sesion_id: int) -> dict:
+    """Datos públicos de un administrador (nunca el hash ni la sal)."""
+    return {
+        "id": a["Id"],
+        "nombre": a["Nombre"],
+        "correo": a["Correo"],
+        "ultimoAcceso": _iso_utc(a["UltimoAcceso"]),
+        "estado": _estado_admin(a),
+        "bloqueadoHasta": _iso_utc(a["BloqueadoHasta"]) if a["Bloqueado"] else None,
+        "esYo": a["Id"] == sesion_id,
+    }
+
+
+def _admin_editable(admin_id: int) -> dict:
+    destino = db.obtener_admin(admin_id)
+    if destino is None:
+        raise StarletteHTTPException(status_code=404, detail="Administrador no encontrado.")
+    if not destino["Activo"]:
+        raise StarletteHTTPException(status_code=403, detail="El administrador está inactivo y no se puede editar.")
+    return destino
+
+
+@app.get("/api/administradores")
+def api_administradores(admin: dict = Depends(require_admin)):
+    return [_admin_json(a, admin["Id"]) for a in db.listar_admins()]
+
+
+@app.post("/api/administradores/{admin_id}/verificar")
+def api_verificar_administrador(
+    admin_id: int, request: Request, datos: VerificarAdministrador, admin: dict = Depends(require_admin)
+):
+    """Contraseña DE ESE administrador → permiso de edición de 5 minutos. Los fallos cuentan para su bloqueo."""
+    if not datos.contrasena:
+        raise ErrorCampo(422, "contrasena", "Ingresa la contraseña.")
+    _controlar_intentos(request)
+    destino = _admin_editable(admin_id)
+    if destino["Bloqueado"]:
+        raise StarletteHTTPException(
+            status_code=423, detail="Este administrador está bloqueado por intentos fallidos. Intenta más tarde."
+        )
+    try:
+        verificado = auth.comprobar_contrasena(destino, datos.contrasena, es_ingreso=False)
+    except auth.CredencialesInvalidas:
+        log.info("Verificación de card rechazada (administrador Id=%s, por Id=%s)", admin_id, admin["Id"])
+        raise ErrorCampo(422, "contrasena", "La contraseña no es correcta.") from None
+    except auth.ContrasenaPorDefectoVencida:
+        raise ErrorCampo(422, "contrasena", MSG_POR_DEFECTO_VENCIDA) from None
+
+    log.info("Permiso de edición entregado (administrador Id=%s, por Id=%s)", admin_id, admin["Id"])
+    resp = JSONResponse({
+        "permiso": auth.crear_permiso(verificado, admin["Id"]),
+        "expiraEnSeg": auth.DURACION_PERMISO_S,
+        "administrador": {"id": verificado["Id"], "nombre": verificado["Nombre"], "correo": verificado["Correo"]},
+    })
+    # Si era su propia card y el hash se migró a PBKDF2, su cookie necesita la huella nueva.
+    if admin_id == admin["Id"] and verificado["ContrasenaHash"] != admin["ContrasenaHash"]:
+        auth.crear_cookie_sesion(resp, auth.datos_sesion(verificado))
+    return resp
+
+
+@app.put("/api/administradores/{admin_id}")
+def api_editar_administrador(admin_id: int, datos: AdministradorEditar, admin: dict = Depends(require_admin)):
+    destino = _admin_editable(admin_id)
+    if not auth.permiso_valido(datos.permiso, destino, admin["Id"]):
+        return JSONResponse({"detail": MSG_PERMISO_VENCIDO, "permisoVencido": True}, status_code=403)
+
+    cambia_clave = bool(datos.nuevaContrasena or datos.confirmacion)
+    if cambia_clave:
+        errores = {
+            ("nuevaContrasena" if campo == "nueva" else campo): mensaje
+            for campo, mensaje in _errores_contrasena_nueva(datos.nuevaContrasena, datos.confirmacion).items()
+        }
+        # Aquí sí se compara con el hash: el permiso ya prueba que se conoce la contraseña actual.
+        if not errores and claves.verificar(
+            destino["AlgoritmoHash"], datos.nuevaContrasena, destino["ContrasenaSal"], destino["ContrasenaHash"]
+        ):
+            errores["nuevaContrasena"] = MSG_IGUAL_A_LA_ACTUAL
+        if errores:
+            raise ErrorValidacion(errores)
+
+    otro = db.obtener_admin_por_correo(datos.correo) if datos.correo != destino["Correo"] else None
+    if otro is not None:
+        raise ErrorCampo(409, "correo", "Ese correo ya pertenece a otro administrador.")
+    try:
+        if not db.actualizar_admin(admin_id, datos.nombre, datos.correo):
+            raise StarletteHTTPException(status_code=404, detail="Administrador no encontrado.")
+    except db.CorreoDuplicado:
+        raise ErrorCampo(409, "correo", "Ese correo ya pertenece a otro administrador.") from None
+
+    hash_nuevo = None
+    if cambia_clave:
+        hash_nuevo, sal, algoritmo = claves.nuevo_hash(datos.nuevaContrasena)
+        db.cambiar_contrasena_admin(admin_id, hash_nuevo, sal, algoritmo)
+    log.info(
+        "Administrador actualizado (Id=%s, por Id=%s%s)", admin_id, admin["Id"], ", con contraseña nueva" if cambia_clave else ""
+    )
+
+    actualizado = db.obtener_admin(admin_id)
+    if actualizado is None:
+        raise StarletteHTTPException(status_code=404, detail="Administrador no encontrado.")
+    mensaje = "Administrador actualizado."
+    if cambia_clave:
+        mensaje = "Administrador actualizado. Su contraseña cambió y sus otras sesiones se cerraron."
+    resp = JSONResponse({"administrador": _admin_json(actualizado, admin["Id"]), "mensaje": mensaje})
+    if hash_nuevo is not None and admin_id == admin["Id"]:
+        # Cambió su propia contraseña: sigue conectado en esta sesión.
+        auth.crear_cookie_sesion(resp, {"id": admin_id, "h": auth.huella(hash_nuevo)})
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -717,7 +965,7 @@ def _respuesta_csv(
 
 @app.get("/api/historial")
 def api_historial(
-    admin: str | None = Depends(require_admin),
+    admin: dict = Depends(require_admin),
     filtros: db.FiltrosHistorial = Depends(_filtros_historial),
     pagina: int = Query(1, ge=1, le=1_000_000),
 ):
@@ -733,7 +981,7 @@ def api_historial(
 
 @app.get("/api/historial/resumen")
 def api_historial_resumen(
-    admin: str | None = Depends(require_admin),
+    admin: dict = Depends(require_admin),
     filtros: db.FiltrosHistorial = Depends(_filtros_historial),
     tz_offset_min: int = Query(0, ge=-840, le=840),
 ):
@@ -742,7 +990,7 @@ def api_historial_resumen(
 
 @app.get("/api/historial/csv")
 def api_historial_csv(
-    admin: str | None = Depends(require_admin),
+    admin: dict = Depends(require_admin),
     filtros: db.FiltrosHistorial = Depends(_filtros_historial),
     tz_offset_min: int = Query(0, ge=-840, le=840),
 ):
@@ -827,7 +1075,7 @@ def _nombre_archivo(texto: str) -> str:
 
 @app.get("/api/estadisticas/portales")
 def api_estadisticas_portales(
-    admin: str | None = Depends(require_admin),
+    admin: dict = Depends(require_admin),
     filtros: db.FiltrosHistorial = Depends(_filtros_estadisticas),
 ):
     datos = db.estadisticas_portales(filtros.desde, filtros.hasta)
@@ -839,7 +1087,7 @@ def api_estadisticas_portales(
 
 @app.get("/api/estadisticas/portales/csv")
 def api_estadisticas_portales_csv(
-    admin: str | None = Depends(require_admin),
+    admin: dict = Depends(require_admin),
     filtros: db.FiltrosHistorial = Depends(_filtros_estadisticas),
     tz_offset_min: int = Query(0, ge=-840, le=840),
 ):
@@ -858,7 +1106,7 @@ def api_estadisticas_portales_csv(
 
 @app.get("/api/estadisticas/usuarios")
 def api_estadisticas_usuarios(
-    admin: str | None = Depends(require_admin),
+    admin: dict = Depends(require_admin),
     filtros: db.FiltrosHistorial = Depends(_filtros_estadisticas_portal),
 ):
     filas, truncado = db.estadisticas_usuarios(
@@ -874,7 +1122,7 @@ def api_estadisticas_usuarios(
 
 @app.get("/api/estadisticas/usuarios/csv")
 def api_estadisticas_usuarios_csv(
-    admin: str | None = Depends(require_admin),
+    admin: dict = Depends(require_admin),
     filtros: db.FiltrosHistorial = Depends(_filtros_estadisticas_portal),
     tz_offset_min: int = Query(0, ge=-840, le=840),
 ):

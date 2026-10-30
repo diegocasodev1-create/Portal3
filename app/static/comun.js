@@ -1,10 +1,9 @@
-/* Utilidades comunes de Inicio, Historial y Estadísticas (JavaScript sin librerías):
-   API, avisos, encabezado, formatos de fecha y duración, y descarga de CSV. */
+/* Utilidades comunes de todas las páginas salvo /contactos (JavaScript sin librerías): API, avisos, modales,
+   botón para mostrar u ocultar contraseñas, encabezado, formatos de fecha y duración, y descarga de CSV.
+   En /login no hay encabezado: esas partes se saltan si sus elementos no existen. */
 "use strict";
 
 window.Mira = (() => {
-  const PORTAL_URL = document.body.dataset.portalUrl || "/";
-
   const $ = (id) => document.getElementById(id);
 
   // -------------------------------------------------------------------------
@@ -12,10 +11,11 @@ window.Mira = (() => {
   // -------------------------------------------------------------------------
 
   class ErrorApi extends Error {
-    constructor(status, detail, errores) {
+    constructor(status, detail, errores, datos) {
       super(detail);
       this.status = status;
       this.errores = errores || {};
+      this.datos = datos || {};
     }
   }
 
@@ -44,11 +44,12 @@ window.Mira = (() => {
     const detail = (datos && typeof datos.detail === "string") ? datos.detail : "Ocurrió un error inesperado.";
 
     if (resp.status === 401) {
-      mostrarBloqueo("sesion");
-    } else if (resp.status === 403 && /permisos/i.test(detail)) {
-      mostrarBloqueo("permisos");
+      mostrarBloqueo();
+    } else if (resp.status === 403 && datos && datos.cambioRequerido) {
+      // Entró con la contraseña por defecto: primero debe cambiarla.
+      window.location.href = "/cambiar-contrasena";
     }
-    throw new ErrorApi(resp.status, detail, datos && datos.errores);
+    throw new ErrorApi(resp.status, detail, datos && datos.errores, datos);
   }
 
   async function api(method, url, body) {
@@ -103,20 +104,89 @@ window.Mira = (() => {
     setTimeout(quitar, tipo === "exito" ? 6000 : 10000);
   }
 
-  function mostrarBloqueo(motivo) {
+  // Sesión vencida o administrador desactivado: se tapa la página y se ofrece volver a ingresar.
+  function mostrarBloqueo() {
     const bloqueo = $("bloqueo");
-    if (!bloqueo.hidden) return;
-    if (motivo === "permisos") {
-      $("bloqueo-titulo").textContent = "No tienes permisos de administrador";
-      $("bloqueo-texto").textContent = "Tu usuario ya no tiene habilitada la Administración de usuarios.";
-    } else {
-      $("bloqueo-titulo").textContent = "Tu sesión venció";
-      $("bloqueo-texto").textContent = "Tu sesión venció, vuelve a ingresar desde el Portal Corporativo.";
-    }
+    if (!bloqueo || !bloqueo.hidden) return;
+    if (modalActivo) cerrarModal(true);
     document.querySelector(".encabezado").inert = true;
     $("contenido").inert = true;
     bloqueo.hidden = false;
     $("bloqueo-link").focus();
+  }
+
+  // -------------------------------------------------------------------------
+  // Modales (Esc para cerrar, foco atrapado, foco devuelto al cerrar)
+  // -------------------------------------------------------------------------
+
+  let modalActivo = null;
+  let focoPrevio = null;
+  let alCerrar = null;
+
+  function focables(contenedor) {
+    return Array.from(contenedor.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter((n) => n.offsetParent !== null);
+  }
+
+  // `cerrado` se llama cada vez que el modal se cierra (Esc, fondo, «Cancelar» o cerrarModal).
+  function abrirModal(modal, focoInicial, cerrado) {
+    if (modalActivo && modalActivo !== modal) cerrarModal(true);
+    if (!modalActivo) focoPrevio = document.activeElement;
+    modal.hidden = false;
+    modalActivo = modal;
+    alCerrar = cerrado || null;
+    prepararOjos(modal);
+    ocultarClaves(modal);
+    document.body.classList.add("modal-abierto");
+    document.querySelector(".encabezado").inert = true;
+    $("contenido").inert = true;
+    (focoInicial || focables(modal)[0] || modal).focus();
+  }
+
+  function cerrarModal(forzar) {
+    if (!modalActivo) return;
+    if (!forzar && modalActivo.dataset.ocupado === "1") return;
+    modalActivo.hidden = true;
+    modalActivo.dataset.ocupado = "";
+    ocultarClaves(modalActivo);
+    modalActivo = null;
+    document.body.classList.remove("modal-abierto");
+    document.querySelector(".encabezado").inert = false;
+    $("contenido").inert = false;
+    if (focoPrevio && document.contains(focoPrevio) && !focoPrevio.disabled) focoPrevio.focus();
+    focoPrevio = null;
+    const avisar = alCerrar;
+    alCerrar = null;
+    if (avisar) avisar();
+  }
+
+  document.addEventListener("keydown", (ev) => {
+    if (!modalActivo) return;
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      cerrarModal(false);
+      return;
+    }
+    if (ev.key === "Tab") {
+      const lista = focables(modalActivo);
+      if (lista.length === 0) { ev.preventDefault(); return; }
+      const primero = lista[0];
+      const ultimo = lista[lista.length - 1];
+      if (ev.shiftKey && (document.activeElement === primero || !modalActivo.contains(document.activeElement))) {
+        ev.preventDefault();
+        ultimo.focus();
+      } else if (!ev.shiftKey && (document.activeElement === ultimo || !modalActivo.contains(document.activeElement))) {
+        ev.preventDefault();
+        primero.focus();
+      }
+    }
+  });
+
+  for (const fondo of document.querySelectorAll(".modal-fondo")) {
+    fondo.addEventListener("click", (ev) => {
+      if (ev.target === fondo || ev.target.closest("[data-cerrar]")) cerrarModal(false);
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -188,43 +258,137 @@ window.Mira = (() => {
   }
 
   // -------------------------------------------------------------------------
+  // Política de contraseñas (las mismas reglas que app/claves.py; la API vuelve a validar)
+  // -------------------------------------------------------------------------
+
+  const CONTRASENA_POR_DEFECTO = "Admin@123456";
+  const REGLAS_CONTRASENA = [
+    ["largo", "La contraseña debe tener al menos 10 caracteres.", (c) => c.length >= 10],
+    ["mayuscula", "La contraseña debe tener al menos una mayúscula.", (c) => /[A-ZÁÉÍÓÚÑÜ]/.test(c)],
+    ["minuscula", "La contraseña debe tener al menos una minúscula.", (c) => /[a-záéíóúñü]/.test(c)],
+    ["numero", "La contraseña debe tener al menos un número.", (c) => /[0-9]/.test(c)],
+    ["simbolo", "La contraseña debe tener al menos un símbolo.", (c) => /[^A-Za-z0-9ÁÉÍÓÚÑÜáéíóúñü\s]/.test(c)],
+  ];
+
+  // Mensaje de la primera regla que no cumple, o "" si está bien. `actual` es opcional.
+  function errorContrasena(nueva, actual) {
+    if (nueva.length > 128) return "La contraseña no puede superar 128 caracteres.";
+    const falla = REGLAS_CONTRASENA.find(([, , cumple]) => !cumple(nueva));
+    if (falla) return falla[1];
+    if (nueva === CONTRASENA_POR_DEFECTO) return "No puedes usar la contraseña por defecto.";
+    if (actual && nueva === actual) return "La contraseña nueva debe ser distinta de la actual.";
+    return "";
+  }
+
+  // Marca en la lista <ul> de requisitos (li[data-regla]) cuáles ya se cumplen.
+  function marcarReglas(lista, nueva, actual) {
+    for (const [nombre, , cumple] of REGLAS_CONTRASENA) {
+      const li = lista.querySelector(`[data-regla="${nombre}"]`);
+      if (li) li.classList.toggle("cumple", cumple(nueva));
+    }
+    const distinta = lista.querySelector('[data-regla="distinta"]');
+    if (distinta) distinta.classList.toggle("cumple", nueva !== "" && nueva !== CONTRASENA_POR_DEFECTO && nueva !== actual);
+  }
+
+  // -------------------------------------------------------------------------
+  // Mostrar u ocultar contraseñas: un botón con ojo dentro de cada input[type="password"]
+  // -------------------------------------------------------------------------
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  function iconoOjo() {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    const trazos = [
+      ["path", { d: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" }],
+      ["circle", { cx: "12", cy: "12", r: "3" }],
+      ["path", { d: "M4 4l16 16", class: "ojo-tachado" }],  // visible solo con la contraseña a la vista
+    ];
+    for (const [tag, atributos] of trazos) {
+      const nodo = document.createElementNS(SVG_NS, tag);
+      for (const [clave, valor] of Object.entries(atributos)) nodo.setAttribute(clave, valor);
+      svg.append(nodo);
+    }
+    return svg;
+  }
+
+  function mostrarClave(input, boton, visible) {
+    input.type = visible ? "text" : "password";
+    boton.setAttribute("aria-pressed", String(visible));
+    boton.setAttribute("aria-label", visible ? "Ocultar contraseña" : "Mostrar contraseña");
+    boton.title = visible ? "Ocultar contraseña" : "Mostrar contraseña";
+  }
+
+  // Agrega el botón a cada contraseña dentro de `raiz` que todavía no lo tenga (se puede llamar varias veces).
+  function prepararOjos(raiz) {
+    for (const input of (raiz || document).querySelectorAll('input[type="password"]:not([data-ojo])')) {
+      input.dataset.ojo = "1";
+      const envoltura = el("span", { class: "campo-clave" });
+      const boton = el("button", { type: "button", class: "btn-ojo" }, iconoOjo());
+      mostrarClave(input, boton, false);
+      input.replaceWith(envoltura);
+      envoltura.append(input, boton);
+      // Con el mouse, el foco no sale del campo; con teclado (Enter o Espacio) vuelve a él.
+      boton.addEventListener("mousedown", (ev) => ev.preventDefault());
+      boton.addEventListener("click", () => {
+        const inicio = input.selectionStart;
+        const fin = input.selectionEnd;
+        mostrarClave(input, boton, input.type === "password");
+        input.focus();
+        if (inicio !== null && fin !== null) input.setSelectionRange(inicio, fin);
+      });
+    }
+  }
+
+  // Vuelve a ocultar las contraseñas de `raiz` (al enviar un formulario o cerrar un modal).
+  function ocultarClaves(raiz) {
+    for (const input of (raiz || document).querySelectorAll("input[data-ojo]")) {
+      const boton = input.parentElement.querySelector(".btn-ojo");
+      if (boton) mostrarClave(input, boton, false);
+    }
+  }
+
+  // Fase de captura: se ocultan antes de que corra el manejador del formulario.
+  document.addEventListener("submit", (ev) => ocultarClaves(ev.target), true);
+  prepararOjos(document);
+
+  // -------------------------------------------------------------------------
   // Encabezado: administrador conectado y cierre de sesión
   // -------------------------------------------------------------------------
 
-  $("btn-logout").addEventListener("click", async (ev) => {
+  if ($("btn-logout")) $("btn-logout").addEventListener("click", async (ev) => {
     setOcupado(ev.currentTarget, true, "Cerrando…");
     try {
-      await fetch("/auth/logout", {
+      await fetch("/api/auth/logout", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json", "X-Requested-With": "mira-admin" },
         body: "{}",
       });
     } catch (e) {
-      // Aunque falle la red, se envía al usuario al portal.
+      // Aunque falle la red, se vuelve al ingreso.
     }
-    window.location.href = PORTAL_URL;
+    window.location.href = "/login";
   });
 
-  async function cargarSesion() {
+  // Promesa con el administrador conectado ({id, nombre, correo, debeCambiarContrasena}) o null.
+  const sesion = !$("admin-nombre") ? Promise.resolve(null) : (async () => {
     try {
       const me = await api("GET", "/api/me");
-      if (me.authEnabled === false) {
-        // Sin inicio de sesión: se ocultan el correo del admin, «Volver al portal» y «Cerrar sesión».
-        document.querySelector(".sesion").hidden = true;
-      } else {
-        $("admin-correo").textContent = me.correo;
-      }
+      $("admin-nombre").textContent = me.nombre;
+      $("admin-nombre").title = me.correo;
+      return me;
     } catch (e) {
-      if (e.status === 401 || e.status === 403) return;
-      toast("error", e.message);
+      if (e.status !== 401 && e.status !== 403) toast("error", e.message);
+      return null;
     }
-  }
-
-  cargarSesion();
+  })();
 
   return {
-    $, el, api, solicitar, setOcupado, toast, ErrorApi,
+    $, el, api, solicitar, setOcupado, toast, ErrorApi, abrirModal, cerrarModal, sesion, errorContrasena, marcarReglas,
+    prepararOjos, ocultarClaves,
     numero, dos, textoDia, inicioDiaLocal, agregarRango, tzOffsetMin, fechaLocal, duracion, textoCierre, descargarCsv,
   };
 })();

@@ -36,7 +36,7 @@ def test_pagina_estadisticas_estructura(cliente_admin):
     assert '<template id="tpl-portal">' in texto and 'role="tablist"' in texto
     assert 'id="e-desde"' in texto and 'id="e-hasta"' in texto
     assert 'href="/historial"' in texto
-    assert '<script src="/static/comun.js?v=11" defer></script>' in texto
+    assert '<script src="/static/comun.js?v=13" defer></script>' in texto
 
 
 def test_historial_enlaza_estadisticas(cliente_admin):
@@ -82,16 +82,9 @@ def test_401_antes_que_validar(cliente, ruta, params):
 
 
 @pytest.mark.parametrize("ruta, params", ENDPOINTS)
-def test_sin_permisos_403(cliente_admin, bd, ruta, params):
+def test_admin_desactivado_401(cliente_admin, bd, ruta, params):
     revocar_admin(bd)
-    resp = cliente_admin.get(ruta, params=params)
-    assert resp.status_code == 403
-    assert resp.json()["detail"] == "No tienes permisos de administrador."
-
-
-@pytest.mark.parametrize("ruta, params", ENDPOINTS)
-def test_sin_auth_responde(cliente_sin_auth, ruta, params):
-    assert cliente_sin_auth.get(ruta, params=params).status_code == 200
+    assert cliente_admin.get(ruta, params=params).status_code == 401
 
 
 @pytest.mark.parametrize("ruta, params", ENDPOINTS)

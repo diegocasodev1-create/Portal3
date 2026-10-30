@@ -6,13 +6,13 @@ import pyodbc
 import pytest
 
 from app import db, main
-from tests.conftest import ADMIN, crear_token
 
 FECHA = datetime(2026, 10, 20, 15, 30, 0)  # UTC sin zona, como la vista
 
 
 def revocar_admin(bd):
-    bd.usuarios[1]["Portal3"] = False
+    # v12: el acceso lo da core.AdministradoresPortal; un administrador desactivado pierde la sesión (401).
+    bd.admins[1]["Activo"] = False
 
 
 # ---------------------------------------------------------------------------
@@ -22,17 +22,17 @@ def revocar_admin(bd):
 PAGINAS = {
     "/": ("Portal de administración", 'href="/estadisticas"'),
     "/contactos": ("Centro Administración de contactos", 'id="tabla-cuerpo"'),
-    "/historial": ("Logs control de ingresos", '<script src="/static/historial.js?v=11"'),
-    "/estadisticas": ("Estadísticas del Portal Corporativo MiraGroup", '<script src="/static/estadisticas.js?v=11"'),
+    "/historial": ("Logs control de ingresos", '<script src="/static/historial.js?v=13"'),
+    "/estadisticas": ("Estadísticas del Portal Corporativo MiraGroup", '<script src="/static/estadisticas.js?v=13"'),
+    "/administradores": ("Centro de administración principal", '<script src="/static/administradores.js?v=13"'),
 }
 
 
 @pytest.mark.parametrize("ruta", PAGINAS)
-def test_paginas_sin_sesion_piden_ingresar(cliente, ruta):
-    resp = cliente.get(ruta)
-    assert resp.status_code == 200
-    assert "Ingresa desde el Portal Corporativo" in resp.text
-    assert PAGINAS[ruta][0] not in resp.text
+def test_paginas_sin_sesion_van_al_login(cliente, ruta):
+    resp = cliente.get(ruta, follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith("/login")
 
 
 @pytest.mark.parametrize("ruta", PAGINAS)
@@ -43,52 +43,39 @@ def test_paginas_con_admin(cliente_admin, ruta):
     assert f"<h1>{titulo}</h1>" in resp.text
     assert marca in resp.text
     assert "{{PORTAL_URL}}" not in resp.text
-    assert 'href="https://portal.ejemplo.com"' in resp.text
+    assert "Volver al portal" not in resp.text
 
 
 @pytest.mark.parametrize("ruta", PAGINAS)
-def test_paginas_sin_permisos_403(cliente_admin, bd, ruta):
+def test_paginas_admin_desactivado_va_al_login(cliente_admin, bd, ruta):
     revocar_admin(bd)
-    resp = cliente_admin.get(ruta)
-    assert resp.status_code == 403
-    assert PAGINAS[ruta][0] not in resp.text
+    resp = cliente_admin.get(ruta, follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith("/login")
 
 
 @pytest.mark.parametrize("ruta", PAGINAS)
 def test_paginas_bd_no_disponible_503(cliente_admin, monkeypatch, ruta):
-    def falla(correo):
+    def falla(aid):
         raise pyodbc.Error("08001", "sin conexión")
 
-    monkeypatch.setattr(db, "es_admin", falla)
+    monkeypatch.setattr(db, "obtener_admin", falla)
     resp = cliente_admin.get(ruta)
     assert resp.status_code == 503
     assert "No se pudo verificar tu acceso" in resp.text
 
 
-@pytest.mark.parametrize("ruta", PAGINAS)
-def test_paginas_sin_auth_se_sirven_directo(cliente_sin_auth, ruta):
-    resp = cliente_sin_auth.get(ruta)
-    assert resp.status_code == 200
-    assert f"<h1>{PAGINAS[ruta][0]}</h1>" in resp.text
-    assert "Ingresa desde el Portal Corporativo" not in resp.text
-
-
-def test_inicio_enlaza_los_dos_modulos(cliente_admin):
+def test_inicio_enlaza_los_tres_modulos(cliente_admin):
     texto = cliente_admin.get("/").text
     assert 'href="/estadisticas"' in texto and "Estadísticas del Portal Corporativo MiraGroup" in texto
     assert 'href="/historial"' not in texto and "Logs control de ingresos" not in texto
     assert 'href="/contactos"' in texto and "Centro Administración de contactos" in texto
+    assert 'href="/administradores"' in texto and "Centro de administración principal" in texto
 
 
-@pytest.mark.parametrize("ruta", ["/contactos", "/historial", "/estadisticas"])
+@pytest.mark.parametrize("ruta", ["/contactos", "/historial", "/estadisticas", "/administradores"])
 def test_paginas_internas_tienen_enlace_inicio(cliente_admin, ruta):
     assert 'href="/">← Inicio</a>' in cliente_admin.get(ruta).text
-
-
-def test_login_redirige_al_inicio(cliente):
-    resp = cliente.post("/auth/portal", data={"token": crear_token()}, follow_redirects=False)
-    assert resp.status_code == 303
-    assert resp.headers["location"] == "/"
 
 
 def test_paginas_sin_scripts_ni_estilos_inline(cliente_admin):
@@ -117,16 +104,9 @@ def test_api_historial_401_antes_que_validar(cliente, ruta):
 
 
 @pytest.mark.parametrize("ruta", ENDPOINTS)
-def test_api_historial_sin_permisos_403(cliente_admin, bd, ruta):
+def test_api_historial_admin_desactivado_401(cliente_admin, bd, ruta):
     revocar_admin(bd)
-    resp = cliente_admin.get(ruta)
-    assert resp.status_code == 403
-    assert resp.json()["detail"] == "No tienes permisos de administrador."
-
-
-@pytest.mark.parametrize("ruta", ENDPOINTS)
-def test_api_historial_sin_auth_responde(cliente_sin_auth, ruta):
-    assert cliente_sin_auth.get(ruta).status_code == 200
+    assert cliente_admin.get(ruta).status_code == 401
 
 
 def test_api_historial_error_de_bd_503(cliente_admin, monkeypatch):
@@ -537,10 +517,10 @@ def test_db_resumen_sin_latidos_promedio_nulo(cursor_falso):
 
 
 @pytest.mark.parametrize("ruta", PAGINAS)
-def test_paginas_con_cache_busting_v11(cliente_admin, ruta):
+def test_paginas_con_cache_busting_v13(cliente_admin, ruta):
     texto = cliente_admin.get(ruta).text
-    assert 'href="/static/styles.css?v=11"' in texto
-    assert '.js"' not in texto and "?v=9" not in texto  # todo archivo local lleva ?v=11
+    assert 'href="/static/styles.css?v=13"' in texto
+    assert '.js"' not in texto and "?v=12" not in texto  # todo archivo local lleva ?v=13
 
 
 def test_historial_columnas_e_indicadores_de_sesion(cliente_admin):

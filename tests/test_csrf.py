@@ -4,7 +4,7 @@ import pytest
 
 from tests.conftest import CSRF
 
-DATOS = {"correo": "nuevo@ejemplo.com", "nombre": "Nuevo", "gerencia": "Gerencia TI", "portal1": True}
+DATOS = {"correo": "nuevo@ejemplo.com", "nombre": "Nuevo", "gerencia": "Gerencia TI", "cliente": "Otro", "portal1": True}
 
 
 @pytest.mark.parametrize(

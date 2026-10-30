@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cambiar contraseña | MiraGroup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/styles.css?v=13">
+  <script src="/static/comun.js?v=13" defer></script>
+  <script src="/static/cambiar.js?v=13" defer></script>
+</head>
+<body>
+  <a class="saltar" href="#contenido">Saltar al contenido</a>
+
+  <header class="encabezado">
+    <div class="marca">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h1>Cambiar contraseña</h1>
+    </div>
+    <nav class="nav-inicio" aria-label="Navegación" id="nav-inicio" hidden>
+      <a class="btn btn-fantasma" href="/">← Inicio</a>
+    </nav>
+    <div class="sesion">
+      <span class="admin-nombre" id="admin-nombre" aria-label="Administrador conectado"></span>
+      <button type="button" class="btn btn-fantasma" id="btn-logout">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <main id="contenido" class="contenido">
+    <section class="card card-formulario" aria-labelledby="titulo-cambio">
+      <h2 id="titulo-cambio">Elige una contraseña nueva</h2>
+      <p class="aviso-cambio" id="aviso-obligatorio" hidden>Estás usando la contraseña por defecto. Para continuar, cámbiala por una propia.</p>
+
+      <form id="form-cambio" novalidate>
+        <p class="error-general" id="error-general" role="alert" hidden></p>
+        <div class="campo">
+          <label for="f-actual">Contraseña actual <span class="req" aria-hidden="true">*</span></label>
+          <input type="password" id="f-actual" name="actual" maxlength="128" autocomplete="current-password" required aria-describedby="e-actual">
+          <p class="error-campo" id="e-actual"></p>
+        </div>
+        <div class="campo">
+          <label for="f-nueva">Contraseña nueva <span class="req" aria-hidden="true">*</span></label>
+          <input type="password" id="f-nueva" name="nueva" maxlength="128" autocomplete="new-password" required aria-describedby="reglas e-nueva">
+          <p class="error-campo" id="e-nueva"></p>
+        </div>
+        <div class="campo">
+          <label for="f-confirmacion">Repite la contraseña nueva <span class="req" aria-hidden="true">*</span></label>
+          <input type="password" id="f-confirmacion" name="confirmacion" maxlength="128" autocomplete="new-password" required aria-describedby="e-confirmacion">
+          <p class="error-campo" id="e-confirmacion"></p>
+        </div>
+        <ul class="reglas" id="reglas" aria-label="Requisitos de la contraseña">
+          <li data-regla="largo">Al menos 10 caracteres</li>
+          <li data-regla="mayuscula">Una mayúscula</li>
+          <li data-regla="minuscula">Una minúscula</li>
+          <li data-regla="numero">Un número</li>
+          <li data-regla="simbolo">Un símbolo (por ejemplo ! @ # $ %)</li>
+          <li data-regla="distinta">Distinta de la contraseña por defecto y de la actual</li>
+        </ul>
+        <div class="modal-acciones">
+          <button type="submit" class="btn btn-primario" id="btn-cambiar">Cambiar contraseña</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <!-- Pantalla de sesión vencida -->
+  <div class="bloqueo" id="bloqueo" hidden>
+    <div class="card card-aviso" role="alertdialog" aria-modal="true" aria-labelledby="bloqueo-titulo" aria-describedby="bloqueo-texto">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h2 id="bloqueo-titulo">Tu sesión venció</h2>
+      <p id="bloqueo-texto">Por seguridad, vuelve a ingresar con tu correo y contraseña.</p>
+      <a class="btn btn-primario" href="/login" id="bloqueo-link">Ingresar</a>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>

@@ -11,7 +11,7 @@ from tests.conftest import ADMIN, CSRF
 def nuevo(**cambios):
     datos = {
         "correo": "juan.perez@ejemplo.com", "nombre": "Juan", "apellido": "Pérez",
-        "gerencia": "Gerencia Comercial", "portal1": True, "portal2": False, "portal3": False,
+        "gerencia": "Gerencia Comercial", "cliente": "Otro", "portal1": True, "portal2": False, "portal3": False,
     }
     datos.update(cambios)
     return datos
@@ -30,7 +30,7 @@ def test_listar_usuarios(cliente_admin, bd):
     lista = cliente_admin.get("/api/usuarios").json()
     assert [u["Correo"] for u in lista] == ["otro@ejemplo.com", ADMIN]
     assert set(lista[0]) == {
-        "Id", "Correo", "Nombre", "Apellido", "Gerencia", "Portal1", "Portal2", "Portal3",
+        "Id", "Correo", "Nombre", "Apellido", "Gerencia", "Cliente", "Portal1", "Portal2", "Portal3",
         "Activo", "InvitacionEnviada", "FechaAlta",
     }
 
@@ -93,6 +93,10 @@ def test_correo_duplicado_por_indice_unico_409(cliente_admin, monkeypatch):
         ({"gerencia": ""}, "gerencia", "La gerencia es obligatoria."),
         ({"gerencia": "Gerencia Inventada"}, "gerencia", "La gerencia seleccionada no es válida."),
         ({"portal1": False, "portal2": False, "portal3": False}, "portales", "Debes marcar al menos un portal."),
+        ({"cliente": ""}, "cliente", "El cliente es obligatorio."),
+        ({"cliente": None}, "cliente", "El cliente es obligatorio."),
+        ({"cliente": "Claro"}, "cliente", "El cliente debe ser Entel, MiraGroup u Otro."),
+        ({"cliente": 1}, "cliente", "Debe ser texto."),
     ],
 )
 def test_validaciones_al_crear(cliente_admin, bd, cambios, campo, mensaje):
@@ -163,11 +167,12 @@ def test_editar_gerencia_invalida_422(cliente_admin, bd):
     assert resp.status_code == 422
 
 
-def test_admin_no_puede_quitarse_portal3(cliente_admin, bd):
+def test_portal3_es_solo_un_dato_y_se_puede_quitar_al_propio_correo(cliente_admin, bd):
+    # v12: Portal3 ya no da acceso a esta app (lo da core.AdministradoresPortal).
     resp = cliente_admin.put("/api/usuarios/1", json=editar(portal1=True, portal3=False), headers=CSRF)
-    assert resp.status_code == 400
-    assert "propio acceso" in resp.json()["detail"]
-    assert bd.usuarios[1]["Portal3"] is True
+    assert resp.status_code == 200
+    assert bd.usuarios[1]["Portal3"] is False
+    assert cliente_admin.get("/api/me").status_code == 200
 
 
 def test_admin_puede_editar_sus_otros_datos(cliente_admin, bd):
@@ -198,11 +203,12 @@ def test_eliminar_usuario(cliente_admin, bd):
     assert u["Id"] not in bd.usuarios
 
 
-def test_admin_no_puede_eliminarse(cliente_admin, bd):
+def test_se_puede_eliminar_el_contacto_con_el_correo_del_admin(cliente_admin, bd):
+    # v12: el contacto de UsuariosEntel y el administrador son registros distintos; la sesión sigue.
     resp = cliente_admin.delete("/api/usuarios/1", headers={**CSRF, "Content-Type": "application/json"})
-    assert resp.status_code == 400
-    assert resp.json()["detail"] == "No puedes eliminar tu propio usuario."
-    assert 1 in bd.usuarios
+    assert resp.status_code == 200
+    assert 1 not in bd.usuarios
+    assert cliente_admin.get("/api/me").status_code == 200
 
 
 def test_eliminar_inexistente_404(cliente_admin):
@@ -414,9 +420,72 @@ def test_eliminar_con_fallo_de_la_cuenta_borra_en_sql_y_avisa(cliente_admin, bd,
     assert u["Id"] not in bd.usuarios
 
 
-def test_admin_que_no_puede_eliminarse_no_toca_la_cuenta(cliente_admin, bd, cuentas):
-    assert cliente_admin.delete("/api/usuarios/1", headers=BORRAR).status_code == 400
-    assert cuentas.llamadas == []
+# --- Cliente (v12) ---
+
+@pytest.mark.parametrize("enviado, guardado", [("Entel", "Entel"), ("miragroup", "MiraGroup"), (" OTRO ", "Otro")])
+def test_crear_guarda_el_cliente_canonico(cliente_admin, bd, enviado, guardado):
+    resp = cliente_admin.post("/api/usuarios", json=nuevo(cliente=enviado), headers=CSRF)
+    assert resp.status_code == 201
+    assert resp.json()["usuario"]["Cliente"] == guardado
+    assert bd.usuarios[resp.json()["usuario"]["Id"]]["Cliente"] == guardado
+
+
+def test_crear_sin_cliente_422(cliente_admin, bd):
+    datos = nuevo()
+    datos.pop("cliente")
+    resp = cliente_admin.post("/api/usuarios", json=datos, headers=CSRF)
+    assert resp.status_code == 422
+    assert resp.json()["errores"]["cliente"] == "El cliente es obligatorio."
+    assert len(bd.usuarios) == 1
+
+
+def test_crear_sin_nombre_ni_gerencia_422(cliente_admin, bd):
+    # Los campos ausentes también se validan (validate_default).
+    resp = cliente_admin.post("/api/usuarios", json={"correo": "x@ejemplo.com", "cliente": "Otro", "portal1": True},
+                              headers=CSRF)
+    assert resp.status_code == 422
+    assert set(resp.json()["errores"]) >= {"nombre", "gerencia"}
+
+
+def test_editar_cambia_el_cliente(cliente_admin, bd):
+    u = bd.agregar("otro@entel.pe", p1=True, cliente="Otro")
+    resp = cliente_admin.put(f"/api/usuarios/{u['Id']}", json=editar(cliente="Entel"), headers=CSRF)
+    assert resp.status_code == 200
+    assert resp.json()["usuario"]["Cliente"] == "Entel"
+
+
+def test_editar_con_cliente_invalido_422(cliente_admin, bd):
+    u = bd.agregar("otro@ejemplo.com", p1=True)
+    resp = cliente_admin.put(f"/api/usuarios/{u['Id']}", json=editar(cliente="Movistar"), headers=CSRF)
+    assert resp.status_code == 422
+    assert resp.json()["errores"] == {"cliente": "El cliente debe ser Entel, MiraGroup u Otro."}
+    assert bd.usuarios[u["Id"]]["Cliente"] == "Otro"
+
+
+def test_sql_de_crear_y_editar_incluye_cliente(monkeypatch):
+    from tests.test_historial import CursorFalso
+
+    cursor = CursorFalso([(7,)], [])
+    cursor.rowcount = 1
+
+    class Conexion:
+        def cursor(self):
+            return cursor
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def conexion():
+        yield Conexion()
+
+    monkeypatch.setattr(db, "_conexion", conexion)
+    monkeypatch.setattr(db, "obtener_usuario", lambda uid: {"Id": uid})
+    db.crear_usuario("a@entel.pe", "A", "", "G", "Entel", True, False, False)
+    sql, params = cursor.ejecutados[0]
+    assert "Cliente" in sql and params[4] == "Entel"
+    db.actualizar_usuario(7, "A", "", "G", "MiraGroup", True, False, False)
+    sql, params = cursor.ejecutados[1]
+    assert "Cliente = ?" in sql and params[3] == "MiraGroup"
 
 
 def test_external_id_deshabilitado_no_llama_a_graph(cliente_admin, bd, envios, monkeypatch):

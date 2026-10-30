@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     sql_user: str = ""
     sql_password: SecretStr = SecretStr("")
 
+    # Portal Externo (Power Pages): solo para el enlace del correo de bienvenida (v12: ya no da acceso a esta app).
     portal_base_url: str = "https://miragroup-portal-externo.powerappsportals.com"
-    token_audience: str | None = None
 
     # Sitio Energía (Power Pages): su clave pública valida los tokens de los latidos de Energía.
     energia_portal_url: str = "https://portalenergia.powerappsportals.com"
@@ -25,10 +25,9 @@ class Settings(BaseSettings):
         "https://portalenergia.powerappsportals.com,https://site-oaciopruebas2.powerappsportals.com"
     )
 
-    # Temporal: con False la app no pide ingreso y /api/* no exige sesión (el código de auth se mantiene).
-    auth_enabled: bool = True
-
+    # Firma la cookie de sesión y los permisos de edición de /administradores.
     session_secret: SecretStr
+    # Expiración por inactividad: cada request válido renueva la cookie.
     session_max_age_min: int = 60
 
     graph_tenant_id: str = "e3112796-84de-4e46-a7d3-3a113c51a3bc"
@@ -46,14 +45,6 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
-    @field_validator("token_audience", mode="before")
-    @classmethod
-    def _audiencia_vacia(cls, v):
-        # TOKEN_AUDIENCE= (vacío) equivale a no exigir audiencia.
-        if v is None or (isinstance(v, str) and not v.strip()):
-            return None
-        return v.strip()
-
     @field_validator("portal_base_url", "energia_portal_url")
     @classmethod
     def _sin_barra_final(cls, v: str) -> str:
@@ -65,10 +56,6 @@ class Settings(BaseSettings):
         if len(v.get_secret_value()) < 32:
             raise ValueError("SESSION_SECRET debe tener al menos 32 caracteres.")
         return v
-
-    @property
-    def portal_host(self) -> str:
-        return (urlparse(self.portal_base_url).hostname or "").lower()
 
     @property
     def energia_host(self) -> str:
