@@ -115,6 +115,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `Fecha` and `Correo` are nullable in the view. The API returns `null` for them and the CSV leaves the cell empty.
 
 ### Next session: start here
+- **Session closed on 2026-10-30** after the v11 deploy; commits `0198d2e` (v11), `443255f` (docs) and this closing commit were pushed to `origin/main`.
+- **v11 follow-ups:**
+  - With the user's OK (prod read), open `/estadisticas` in Azure and check that `/api/estadisticas/portales` and `/usuarios` answer 200 with the same totals as the local check.
+  - Ask the user whether management wants levels 3/4 (funcionalidades / subfuncionalidades) and where that data will come from. Nothing for them exists yet in the DB.
 0. **v8–v10 heartbeats:** ask the user whether the Power Pages JS (Energía Header with `t`, and MiraStock) is published. Then check in `/historial` that `FinalSesion` / «Tiempo de sesión» fill in for Energía and MiraStock, and that «Atrás» / «Cerrar sesión» shows «Botón» in «Cierre». A Log Analytics query for errors on `/api/latido` is possible: the app logs only errors there, never the key or token, and the access log excludes the route. Each query needs the user's OK.
 1. **Ask the user** whether the welcome emails for Id 55 and 56 arrived and whether code-only sign-in worked for them. Not verified by Claude.
 2. **Sync** (`python -m app.tools.sync_externalid`): there is no evidence it was ever run.
