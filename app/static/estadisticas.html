@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Estadísticas del Portal Corporativo | MiraGroup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/styles.css?v=11">
+  <script src="/static/comun.js?v=11" defer></script>
+  <script src="/static/estadisticas.js?v=11" defer></script>
+</head>
+<body data-portal-url="{{PORTAL_URL}}">
+  <a class="saltar" href="#contenido">Saltar al contenido</a>
+
+  <header class="encabezado">
+    <div class="marca">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h1>Estadísticas del Portal Corporativo MiraGroup</h1>
+    </div>
+    <nav class="nav-inicio" aria-label="Navegación">
+      <a class="btn btn-fantasma" href="/">← Inicio</a>
+    </nav>
+    <div class="sesion">
+      <span class="admin-correo" id="admin-correo" aria-label="Administrador conectado"></span>
+      <a class="btn btn-secundario" href="{{PORTAL_URL}}">Volver al portal</a>
+      <button type="button" class="btn btn-fantasma" id="btn-logout">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <main id="contenido" class="contenido">
+    <form class="barra card" id="form-rango" aria-label="Período" novalidate>
+      <div class="campo">
+        <label for="e-desde">Desde</label>
+        <input type="date" id="e-desde" aria-describedby="e-fechas">
+      </div>
+      <div class="campo">
+        <label for="e-hasta">Hasta</label>
+        <input type="date" id="e-hasta" aria-describedby="e-fechas">
+      </div>
+      <div class="barra-acciones">
+        <button type="submit" class="btn btn-primario" id="btn-aplicar">Aplicar</button>
+        <a class="btn btn-fantasma" href="/historial">Historial completo</a>
+      </div>
+      <p class="error-campo error-fechas" id="e-fechas" role="alert"></p>
+    </form>
+
+    <!-- Nivel 1: totales por portal. Los bloques de cada portal (nivel 2) los arma estadisticas.js. -->
+    <details class="card bloque" id="bloque-general" open>
+      <summary class="bloque-titulo">
+        <h2>General por portal</h2>
+        <span class="bloque-meta" id="general-meta"></span>
+      </summary>
+      <div class="bloque-cuerpo" id="general-cuerpo"></div>
+    </details>
+
+    <div id="bloques-portales"></div>
+
+    <template id="tpl-portal">
+      <details class="card bloque bloque-portal">
+        <summary class="bloque-titulo">
+          <h2 class="bloque-nombre"></h2>
+          <span class="bloque-meta"></span>
+        </summary>
+        <div class="bloque-cuerpo">
+          <div class="pestanas" role="tablist"></div>
+          <div class="subvistas"></div>
+        </div>
+      </details>
+    </template>
+  </main>
+
+  <!-- Pantalla de sesión vencida / sin permisos -->
+  <div class="bloqueo" id="bloqueo" hidden>
+    <div class="card card-aviso" role="alertdialog" aria-modal="true" aria-labelledby="bloqueo-titulo" aria-describedby="bloqueo-texto">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h2 id="bloqueo-titulo">Tu sesión venció</h2>
+      <p id="bloqueo-texto">Vuelve a ingresar desde el Portal Corporativo.</p>
+      <a class="btn btn-primario" href="{{PORTAL_URL}}" id="bloqueo-link">Ir al Portal Corporativo</a>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>

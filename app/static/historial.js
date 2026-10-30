@@ -2,11 +2,13 @@
 "use strict";
 
 (() => {
-  const { $, el, api, solicitar, setOcupado, toast } = window.Mira;
+  const {
+    $, el, api, setOcupado, toast,
+    numero, textoDia, inicioDiaLocal, agregarRango, tzOffsetMin, fechaLocal, duracion, textoCierre, descargarCsv,
+  } = window.Mira;
 
   const DIAS_POR_DEFECTO = 7;
   const MAX_DIAS_CON_CEROS = 92; // en rangos más largos el gráfico muestra solo los días con accesos
-  const numero = new Intl.NumberFormat("es");
 
   const estado = {
     params: null, // URLSearchParams de los filtros aplicados (sin página)
@@ -18,42 +20,8 @@
   };
 
   // -------------------------------------------------------------------------
-  // Fechas: días locales del navegador → UTC para la API
+  // Días del gráfico (los formatos comunes están en comun.js)
   // -------------------------------------------------------------------------
-
-  const dos = (n) => String(n).padStart(2, "0");
-
-  function textoDia(fecha) {
-    return `${fecha.getFullYear()}-${dos(fecha.getMonth() + 1)}-${dos(fecha.getDate())}`;
-  }
-
-  // Medianoche local del día AAAA-MM-DD, más `sumarDias`.
-  function inicioDiaLocal(valor, sumarDias) {
-    const [a, m, d] = valor.split("-").map(Number);
-    return new Date(a, m - 1, d + (sumarDias || 0));
-  }
-
-  function fechaLocal(iso) {
-    if (!iso) return "—";
-    const f = new Date(iso);
-    return `${dos(f.getDate())}/${dos(f.getMonth() + 1)}/${f.getFullYear()} ${dos(f.getHours())}:${dos(f.getMinutes())}`;
-  }
-
-  // Duración en segundos → «< 1 min», «44 min» o «1 h 05 min» (minutos truncados).
-  function duracion(segundos) {
-    if (segundos === null || segundos === undefined) return "—";
-    if (segundos < 60) return "< 1 min";
-    const minutos = Math.floor(segundos / 60);
-    if (minutos < 60) return `${minutos} min`;
-    return `${numero.format(Math.floor(minutos / 60))} h ${dos(minutos % 60)} min`;
-  }
-
-  // Cómo terminó la sesión (los mismos textos que la columna «Cierre» del CSV).
-  function textoCierre(a) {
-    if (a.CierreExplicito) return "Botón";
-    if (a.EnCurso) return "En curso";
-    return a.FinalSesion ? "Inactividad" : "—";
-  }
 
   function diaCorto(valor) {
     const [, m, d] = valor.split("-");
@@ -98,9 +66,7 @@
     if (correo) params.set("correo", correo);
     if ($("h-portal").value) params.set("portal", $("h-portal").value);
     if ($("h-resultado").value) params.set("resultado", $("h-resultado").value);
-    if (desde) params.set("desde", inicioDiaLocal(desde).toISOString());
-    // «Hasta» incluye el día completo: se envía el día siguiente a las 00:00 locales (exclusivo).
-    if (hasta) params.set("hasta", inicioDiaLocal(hasta, 1).toISOString());
+    agregarRango(params, desde, hasta);
     return { params, rango: { desde, hasta } };
   }
 
@@ -137,7 +103,7 @@
   async function cargarResumen() {
     const pedido = ++estado.pedidoResumen;
     const params = new URLSearchParams(estado.params);
-    params.set("tz_offset_min", String(-new Date().getTimezoneOffset()));
+    params.set("tz_offset_min", tzOffsetMin());
     let r;
     try {
       r = await api("GET", `/api/historial/resumen?${params}`);
@@ -278,14 +244,8 @@
   }
 
   // -------------------------------------------------------------------------
-  // Exportar a Excel (CSV con los filtros del formulario)
+  // Exportar a Excel (CSV con los filtros del formulario, fechas en hora local)
   // -------------------------------------------------------------------------
-
-  function nombreArchivo(resp) {
-    const disposicion = resp.headers.get("Content-Disposition") || "";
-    const m = /filename="([^"]+)"/.exec(disposicion);
-    return m ? m[1] : "historial_accesos.csv";
-  }
 
   async function exportar(ev) {
     const filtros = leerFiltros();
@@ -293,15 +253,8 @@
     const boton = ev.currentTarget;
     setOcupado(boton, true, "Exportando…");
     try {
-      const resp = await solicitar("GET", `/api/historial/csv?${filtros.params}`);
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const enlace = el("a", { href: url, download: nombreArchivo(resp), hidden: true });
-      document.body.append(enlace);
-      enlace.click();
-      enlace.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      const tope = resp.headers.get("X-Historial-Truncado");
+      filtros.params.set("tz_offset_min", tzOffsetMin());
+      const tope = await descargarCsv(`/api/historial/csv?${filtros.params}`, "historial_accesos.csv");
       if (tope) {
         toast("aviso", `El archivo incluye solo los ${numero.format(Number(tope))} accesos más recientes. Acota las fechas para exportar el resto.`);
       } else {

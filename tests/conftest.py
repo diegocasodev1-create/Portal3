@@ -300,6 +300,51 @@ class BDFalsa:
             "porDia": [{"dia": d, "total": n} for d, n in sorted(por_dia.items())],
         }
 
+    # Misma lógica que db.estadisticas_*: sesiones = filas OK del rango.
+    def _sesiones(self, portal, desde, hasta):
+        filtros = db.FiltrosHistorial(portal=portal, resultado="OK", desde=desde, hasta=hasta)
+        return [r for r in self._filtrar_historial(filtros) if r["Portal"] is not None]
+
+    @staticmethod
+    def _agregados(filas):
+        tiempos = [r["TiempoSesionSeg"] for r in filas if r["TiempoSesionSeg"] is not None]
+        return {
+            "sesiones": len(filas),
+            "segundosTotales": sum(tiempos) if tiempos else None,
+            "promedioSeg": sum(tiempos) // len(tiempos) if tiempos else None,
+            "sesionesMedidas": len(tiempos),
+            "ultimaConexion": max((r["Fecha"] for r in filas), default=None),
+        }
+
+    def estadisticas_portales(self, desde, hasta):
+        self.llamadas_historial.append(("portales", desde, hasta))
+        filas = self._sesiones(None, desde, hasta)
+        conocidos = {r["Portal"] for r in self.historial if r["Portal"] is not None}
+
+        def unicos(fs):
+            return len({r["Correo"] for r in fs if r["Correo"] is not None})
+
+        return {
+            "portales": [
+                {"portal": p, "usuariosUnicos": unicos(fs), **self._agregados(fs)}
+                for p in sorted(conocidos, key=str.casefold)
+                for fs in [[r for r in filas if r["Portal"] == p]]
+            ],
+            "total": {"usuariosUnicos": unicos(filas), **self._agregados(filas)},
+        }
+
+    def estadisticas_usuarios(self, portal, desde, hasta, tope):
+        self.llamadas_historial.append(("usuarios", portal, desde, hasta, tope))
+        por_correo: dict = {}
+        for r in self._sesiones(portal, desde, hasta):
+            por_correo.setdefault(r["Correo"], []).append(r)
+        filas = [
+            {"usuario": max((r["Usuario"] or "") for r in fs).strip(), "correo": correo, **self._agregados(fs)}
+            for correo, fs in por_correo.items()
+        ]
+        filas.sort(key=lambda f: (-(f["segundosTotales"] or 0), -f["sesiones"], f["correo"] or ""))
+        return filas[:tope], len(filas) > tope
+
 
 @pytest.fixture
 def bd(monkeypatch):
@@ -308,6 +353,7 @@ def bd(monkeypatch):
         "es_admin", "listar_gerencias", "listar_usuarios", "obtener_usuario", "existe_correo",
         "crear_usuario", "actualizar_usuario", "eliminar_usuario", "marcar_invitacion_enviada",
         "listar_usuarios_con_acceso", "listar_historial", "resumen_historial",
+        "estadisticas_portales", "estadisticas_usuarios",
         "latido_mirastock", "latido_energia", "cierre_mirastock", "cierre_energia",
         "latido_energia_llave", "cierre_energia_llave",
     ):

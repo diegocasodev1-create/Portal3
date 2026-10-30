@@ -1,4 +1,5 @@
-/* Utilidades comunes de Inicio e Historial (JavaScript sin librerías): API, avisos y encabezado. */
+/* Utilidades comunes de Inicio, Historial y Estadísticas (JavaScript sin librerías):
+   API, avisos, encabezado, formatos de fecha y duración, y descarga de CSV. */
 "use strict";
 
 window.Mira = (() => {
@@ -119,6 +120,74 @@ window.Mira = (() => {
   }
 
   // -------------------------------------------------------------------------
+  // Formatos: días locales del navegador → UTC para la API, fechas y duraciones
+  // -------------------------------------------------------------------------
+
+  const numero = new Intl.NumberFormat("es");
+  const dos = (n) => String(n).padStart(2, "0");
+
+  function textoDia(fecha) {
+    return `${fecha.getFullYear()}-${dos(fecha.getMonth() + 1)}-${dos(fecha.getDate())}`;
+  }
+
+  // Medianoche local del día AAAA-MM-DD, más `sumarDias`.
+  function inicioDiaLocal(valor, sumarDias) {
+    const [a, m, d] = valor.split("-").map(Number);
+    return new Date(a, m - 1, d + (sumarDias || 0));
+  }
+
+  // Agrega `desde`/`hasta` (días locales AAAA-MM-DD) a `params`.
+  // «Hasta» incluye el día completo: se envía el día siguiente a las 00:00 locales (exclusivo).
+  function agregarRango(params, desde, hasta) {
+    if (desde) params.set("desde", inicioDiaLocal(desde).toISOString());
+    if (hasta) params.set("hasta", inicioDiaLocal(hasta, 1).toISOString());
+    return params;
+  }
+
+  // Minutos que hay que sumar a UTC para llegar a la hora local (para agrupar días y para los CSV).
+  const tzOffsetMin = () => String(-new Date().getTimezoneOffset());
+
+  function fechaLocal(iso) {
+    if (!iso) return "—";
+    const f = new Date(iso);
+    return `${dos(f.getDate())}/${dos(f.getMonth() + 1)}/${f.getFullYear()} ${dos(f.getHours())}:${dos(f.getMinutes())}`;
+  }
+
+  // Duración en segundos → «< 1 min», «44 min» o «52 h 10 min» (minutos truncados).
+  function duracion(segundos) {
+    if (segundos === null || segundos === undefined) return "—";
+    if (segundos < 60) return "< 1 min";
+    const minutos = Math.floor(segundos / 60);
+    if (minutos < 60) return `${minutos} min`;
+    return `${numero.format(Math.floor(minutos / 60))} h ${dos(minutos % 60)} min`;
+  }
+
+  // Cómo terminó la sesión (los mismos textos que la columna «Cierre» del CSV).
+  function textoCierre(a) {
+    if (a.CierreExplicito) return "Botón";
+    if (a.EnCurso) return "En curso";
+    return a.FinalSesion ? "Inactividad" : "—";
+  }
+
+  // -------------------------------------------------------------------------
+  // Exportar a Excel: el CSV se baja con fetch + blob, así 401/422 se muestran en la página
+  // -------------------------------------------------------------------------
+
+  // Devuelve el tope de filas si la API truncó el archivo, o null.
+  async function descargarCsv(url, nombrePorDefecto) {
+    const resp = await solicitar("GET", url);
+    const blob = await resp.blob();
+    const m = /filename="([^"]+)"/.exec(resp.headers.get("Content-Disposition") || "");
+    const enlaceUrl = URL.createObjectURL(blob);
+    const enlace = el("a", { href: enlaceUrl, download: m ? m[1] : nombrePorDefecto, hidden: true });
+    document.body.append(enlace);
+    enlace.click();
+    enlace.remove();
+    setTimeout(() => URL.revokeObjectURL(enlaceUrl), 1000);
+    return resp.headers.get("X-Historial-Truncado");
+  }
+
+  // -------------------------------------------------------------------------
   // Encabezado: administrador conectado y cierre de sesión
   // -------------------------------------------------------------------------
 
@@ -154,5 +223,8 @@ window.Mira = (() => {
 
   cargarSesion();
 
-  return { $, el, api, solicitar, setOcupado, toast, ErrorApi };
+  return {
+    $, el, api, solicitar, setOcupado, toast, ErrorApi,
+    numero, dos, textoDia, inicioDiaLocal, agregarRango, tzOffsetMin, fechaLocal, duracion, textoCierre, descargarCsv,
+  };
 })();

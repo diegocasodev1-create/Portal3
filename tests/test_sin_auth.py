@@ -12,7 +12,7 @@ JSON_CSRF = {**CSRF, "Content-Type": "application/json"}
 def test_contactos_muestra_la_app_sin_sesion(cliente_sin_auth):
     resp = cliente_sin_auth.get("/contactos")
     assert resp.status_code == 200
-    assert '<script src="/static/app.js?v=9"' in resp.text
+    assert '<script src="/static/app.js?v=11"' in resp.text
     assert 'id="tabla-cuerpo"' in resp.text
     assert "Ingresa desde el Portal Corporativo" not in resp.text
 

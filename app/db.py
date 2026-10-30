@@ -433,3 +433,87 @@ def resumen_historial(filtros: FiltrosHistorial, tz_offset_min: int) -> dict[str
 def _texto_dia(valor: Any) -> str:
     # El driver devuelve date (o str con controladores antiguos).
     return valor.isoformat() if isinstance(valor, date) else str(valor)[:10]
+
+
+# ---------------------------------------------------------------------------
+# Estadísticas (solo lectura sobre core.vHistorialAccesos; una sesión = una fila con Resultado = 'OK')
+# ---------------------------------------------------------------------------
+
+# Sesiones, segundos totales, promedio (AVG ignora los NULL: solo sesiones medidas), sesiones medidas y última.
+_AGREGADOS_SESIONES = (
+    "COUNT(*), SUM(CAST(TiempoSesionSeg AS BIGINT)), AVG(CAST(TiempoSesionSeg AS BIGINT)),"
+    " COUNT(TiempoSesionSeg), MAX(Fecha)"
+)
+
+
+def _where_sesiones(portal: str | None, desde: datetime | None, hasta: datetime | None) -> tuple[str, list[Any]]:
+    return _where_historial(FiltrosHistorial(portal=portal, resultado="OK", desde=desde, hasta=hasta))
+
+
+def _agregados(sesiones: int, segundos: Any, promedio: Any, medidas: int, ultima: Any) -> dict[str, Any]:
+    return {
+        "sesiones": sesiones,
+        "segundosTotales": int(segundos) if segundos is not None else None,
+        "promedioSeg": int(promedio) if promedio is not None else None,
+        "sesionesMedidas": medidas,
+        "ultimaConexion": ultima,
+    }
+
+
+def _sin_sesiones() -> dict[str, Any]:
+    return _agregados(0, None, None, 0, None)
+
+
+def estadisticas_portales(desde: datetime | None, hasta: datetime | None) -> dict[str, Any]:
+    """Una entrada por portal conocido (aunque no tenga sesiones en el rango) y el total general.
+
+    El total sale de GROUPING SETS: cuenta los usuarios únicos sin repetirlos entre portales.
+    """
+    where, params = _where_sesiones(None, desde, hasta)
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT Portal FROM core.vHistorialAccesos WHERE Portal IS NOT NULL")
+        conocidos = [r[0] for r in cur.fetchall()]
+        cur.execute(
+            f"SELECT Portal, GROUPING(Portal), COUNT(DISTINCT Correo), {_AGREGADOS_SESIONES}"
+            f" FROM core.vHistorialAccesos{where} AND Portal IS NOT NULL"
+            " GROUP BY GROUPING SETS ((Portal), ())",
+            *params,
+        )
+        filas = cur.fetchall()
+    por_portal: dict[str, dict[str, Any]] = {}
+    total = {"usuariosUnicos": 0, **_sin_sesiones()}
+    for portal, es_total, unicos, *resto in filas:
+        datos = {"usuariosUnicos": unicos, **_agregados(*resto)}
+        if es_total:
+            total = datos
+        else:
+            por_portal[portal] = datos
+    nombres = sorted(set(conocidos) | set(por_portal), key=str.casefold)
+    return {
+        "portales": [
+            {"portal": p, **por_portal.get(p, {"usuariosUnicos": 0, **_sin_sesiones()})} for p in nombres
+        ],
+        "total": total,
+    }
+
+
+def estadisticas_usuarios(
+    portal: str, desde: datetime | None, hasta: datetime | None, tope: int
+) -> tuple[list[dict[str, Any]], bool]:
+    """Una fila por usuario del portal, de más a menos horas. Devuelve (filas, truncado)."""
+    where, params = _where_sesiones(portal, desde, hasta)
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT TOP (?) Correo, MAX(ISNULL(Usuario, '')), {_AGREGADOS_SESIONES}"
+            f" FROM core.vHistorialAccesos{where}"
+            " GROUP BY Correo"
+            " ORDER BY ISNULL(SUM(CAST(TiempoSesionSeg AS BIGINT)), 0) DESC, COUNT(*) DESC, Correo",
+            tope + 1, *params,
+        )
+        filas = [
+            {"usuario": (r[1] or "").strip(), "correo": r[0], **_agregados(*r[2:])}
+            for r in cur.fetchall()
+        ]
+    return filas[:tope], len(filas) > tope

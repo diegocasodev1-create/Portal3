@@ -20,9 +20,10 @@ def revocar_admin(bd):
 # ---------------------------------------------------------------------------
 
 PAGINAS = {
-    "/": ("Portal de administración", 'href="/historial"'),
+    "/": ("Portal de administración", 'href="/estadisticas"'),
     "/contactos": ("Centro Administración de contactos", 'id="tabla-cuerpo"'),
-    "/historial": ("Logs control de ingresos", '<script src="/static/historial.js?v=9"'),
+    "/historial": ("Logs control de ingresos", '<script src="/static/historial.js?v=11"'),
+    "/estadisticas": ("Estadísticas del Portal Corporativo MiraGroup", '<script src="/static/estadisticas.js?v=11"'),
 }
 
 
@@ -74,11 +75,12 @@ def test_paginas_sin_auth_se_sirven_directo(cliente_sin_auth, ruta):
 
 def test_inicio_enlaza_los_dos_modulos(cliente_admin):
     texto = cliente_admin.get("/").text
-    assert 'href="/historial"' in texto and "Logs control de ingresos" in texto
+    assert 'href="/estadisticas"' in texto and "Estadísticas del Portal Corporativo MiraGroup" in texto
+    assert 'href="/historial"' not in texto and "Logs control de ingresos" not in texto
     assert 'href="/contactos"' in texto and "Centro Administración de contactos" in texto
 
 
-@pytest.mark.parametrize("ruta", ["/contactos", "/historial"])
+@pytest.mark.parametrize("ruta", ["/contactos", "/historial", "/estadisticas"])
 def test_paginas_internas_tienen_enlace_inicio(cliente_admin, ruta):
     assert 'href="/">← Inicio</a>' in cliente_admin.get(ruta).text
 
@@ -257,7 +259,7 @@ def test_fecha_sin_zona_se_toma_como_utc(cliente_admin, bd):
 
 @pytest.mark.parametrize("ruta", ENDPOINTS)
 @pytest.mark.parametrize("params, campo", [
-    ({"portal": "Admin"}, "portal"),
+    ({"portal": "x" * 51}, "portal"),
     ({"resultado": "Error"}, "resultado"),
     ({"desde": "20/10/2026"}, "desde"),
     ({"hasta": "mañana"}, "hasta"),
@@ -276,9 +278,9 @@ def test_validacion_422(cliente_admin, bd, ruta, params, campo):
 
 
 def test_validacion_junta_todos_los_errores(cliente_admin):
-    datos = cliente_admin.get("/api/historial", params={"portal": "x", "resultado": "y", "desde": "z"}).json()
+    datos = cliente_admin.get("/api/historial", params={"portal": "x" * 51, "resultado": "y", "desde": "z"}).json()
     assert set(datos["errores"]) == {"portal", "resultado", "desde"}
-    assert datos["errores"]["portal"] == "El portal debe ser Energía o MiraStock."
+    assert datos["errores"]["portal"] == "El portal no puede superar los 50 caracteres."
 
 
 @pytest.mark.parametrize("pagina", ["0", "-1", "abc", "1000001"])
@@ -535,10 +537,10 @@ def test_db_resumen_sin_latidos_promedio_nulo(cursor_falso):
 
 
 @pytest.mark.parametrize("ruta", PAGINAS)
-def test_paginas_con_cache_busting_v9(cliente_admin, ruta):
+def test_paginas_con_cache_busting_v11(cliente_admin, ruta):
     texto = cliente_admin.get(ruta).text
-    assert 'href="/static/styles.css?v=9"' in texto
-    assert '.js"' not in texto and "?v=8" not in texto  # todo archivo local lleva ?v=9
+    assert 'href="/static/styles.css?v=11"' in texto
+    assert '.js"' not in texto and "?v=9" not in texto  # todo archivo local lleva ?v=11
 
 
 def test_historial_columnas_e_indicadores_de_sesion(cliente_admin):

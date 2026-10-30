@@ -4,8 +4,9 @@ import csv
 import io
 import json
 import logging
+import unicodedata
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape
 from http import HTTPStatus
 from pathlib import Path
@@ -86,6 +87,7 @@ def _leer_plantilla(ruta: Path) -> str:
 _INICIO_HTML = _leer_plantilla(STATIC_DIR / "inicio.html")
 _CONTACTOS_HTML = _leer_plantilla(STATIC_DIR / "contactos.html")
 _HISTORIAL_HTML = _leer_plantilla(STATIC_DIR / "historial.html")
+_ESTADISTICAS_HTML = _leer_plantilla(STATIC_DIR / "estadisticas.html")
 _SIN_ACCESO_HTML = _leer_plantilla(TEMPLATES_DIR / "sin_acceso.html")
 _SIN_PERMISOS_HTML = _leer_plantilla(TEMPLATES_DIR / "sin_permisos.html")
 
@@ -288,6 +290,11 @@ def contactos(request: Request):
 @app.get("/historial", response_class=HTMLResponse)
 def historial(request: Request):
     return _pagina_protegida(request, _HISTORIAL_HTML)
+
+
+@app.get("/estadisticas", response_class=HTMLResponse)
+def estadisticas(request: Request):
+    return _pagina_protegida(request, _ESTADISTICAS_HTML)
 
 
 @app.post("/auth/portal")
@@ -576,10 +583,13 @@ async def api_latido(request: Request):
 # Historial de accesos (solo lectura)
 # ---------------------------------------------------------------------------
 
+# Los portales salen de la vista: cualquier nombre sirve como filtro. Estos solo fijan la escritura canónica.
 PORTALES_HISTORIAL = ("Energía", "MiraStock")
+MAX_LARGO_PORTAL = 50
 RESULTADOS_HISTORIAL = ("OK", "Denegado")
 TAMANO_PAGINA_HISTORIAL = 50
 TOPE_CSV_HISTORIAL = 50_000
+TOPE_USUARIOS_ESTADISTICAS = 5_000
 
 
 def _valor_permitido(valor: str, permitidos: tuple[str, ...]) -> str | None:
@@ -613,9 +623,9 @@ def _filtros_historial(
 
     portal_ok = None
     if portal and portal.strip():
-        portal_ok = _valor_permitido(portal, PORTALES_HISTORIAL)
-        if portal_ok is None:
-            errores["portal"] = "El portal debe ser Energía o MiraStock."
+        portal_ok = _valor_permitido(portal, PORTALES_HISTORIAL) or portal.strip()
+        if len(portal_ok) > MAX_LARGO_PORTAL:
+            errores["portal"] = f"El portal no puede superar los {MAX_LARGO_PORTAL} caracteres."
 
     resultado_ok = None
     if resultado and resultado.strip():
@@ -652,13 +662,55 @@ def _texto_cierre(fila: dict) -> str:
     return "Inactividad" if fila["FinalSesion"] else ""
 
 
-def _fecha_csv(fecha: datetime | None) -> str:
-    return fecha.strftime("%Y-%m-%d %H:%M:%S") if fecha else ""
+def _zona_csv(tz_offset_min: int) -> str:
+    """Texto para el encabezado de las columnas de fecha: «UTC» o «hora local, UTC-03:00»."""
+    if tz_offset_min == 0:
+        return "UTC"
+    horas, minutos = divmod(abs(tz_offset_min), 60)
+    return f"hora local, UTC{'+' if tz_offset_min > 0 else '-'}{horas:02d}:{minutos:02d}"
+
+
+def _fecha_csv(fecha: datetime | None, tz_offset_min: int = 0) -> str:
+    return (fecha + timedelta(minutes=tz_offset_min)).strftime("%Y-%m-%d %H:%M:%S") if fecha else ""
+
+
+def _minutos_csv(segundos: int | None) -> str:
+    # Minutos enteros truncados (40 s → 0); vacío si no hubo latidos.
+    return str(max(0, segundos) // 60) if segundos is not None else ""
+
+
+def _duracion_texto(segundos: int | None) -> str:
+    """Igual que la pantalla: «< 1 min», «44 min» o «52 h 10 min» (truncado); vacío si no hay tiempo medido."""
+    if segundos is None:
+        return ""
+    minutos = max(0, segundos) // 60
+    if segundos < 60:
+        return "< 1 min"
+    if minutos < 60:
+        return f"{minutos} min"
+    return f"{minutos // 60} h {minutos % 60:02d} min"
 
 
 def _celda_csv(valor: str) -> str:
     """Neutraliza la inyección de fórmulas: Excel interpretaría = + - @ (y tab o CR) al inicio."""
     return "'" + valor if valor and valor[0] in "=+-@\t\r" else valor
+
+
+def _respuesta_csv(
+    encabezados: list[str], filas: list[list[str]], prefijo: str, truncado_en: int | None = None
+) -> Response:
+    salida = io.StringIO()
+    # Separador ';' y BOM: Excel en español abre el archivo con columnas y acentos correctos.
+    escritor = csv.writer(salida, delimiter=";", lineterminator="\r\n")
+    escritor.writerow(encabezados)
+    escritor.writerows(filas)
+    nombre = f"{prefijo}_{datetime.now(timezone.utc):%Y%m%d}.csv"
+    headers = {"Content-Disposition": f'attachment; filename="{nombre}"'}
+    if truncado_en is not None:
+        headers["X-Historial-Truncado"] = str(truncado_en)
+    return Response(
+        ("\ufeff" + salida.getvalue()).encode("utf-8"), media_type="text/csv; charset=utf-8", headers=headers
+    )
 
 
 # `admin` va primero: sin sesión responde 401 antes de validar los filtros.
@@ -692,30 +744,151 @@ def api_historial_resumen(
 def api_historial_csv(
     admin: str | None = Depends(require_admin),
     filtros: db.FiltrosHistorial = Depends(_filtros_historial),
+    tz_offset_min: int = Query(0, ge=-840, le=840),
 ):
     filas, total = db.listar_historial(filtros, 1, TOPE_CSV_HISTORIAL)
-    salida = io.StringIO()
-    # Separador ';' y BOM: Excel en español abre el archivo con columnas y acentos correctos.
-    escritor = csv.writer(salida, delimiter=";", lineterminator="\r\n")
-    escritor.writerow([
-        "Fecha (UTC)", "Usuario", "Correo", "Portal", "Resultado", "Final de sesión (UTC)", "Tiempo de sesión (min)",
-        "Cierre",
-    ])
-    for f in filas:
-        segundos = f["TiempoSesionSeg"]
-        escritor.writerow([
-            _fecha_csv(f["Fecha"]),
+    zona = _zona_csv(tz_offset_min)
+    encabezados = [
+        f"Fecha ({zona})", "Usuario", "Correo", "Portal", "Resultado", f"Final de sesión ({zona})",
+        "Tiempo de sesión (min)", "Cierre",
+    ]
+    contenido = [
+        [
+            _fecha_csv(f["Fecha"], tz_offset_min),
             *(_celda_csv(f[c] or "") for c in ("Usuario", "Correo", "Portal", "Resultado")),
-            _fecha_csv(f["FinalSesion"]),
-            # Minutos enteros truncados (40 s → 0); vacío si no hubo latidos.
-            str(max(0, segundos) // 60) if segundos is not None else "",
+            _fecha_csv(f["FinalSesion"], tz_offset_min),
+            _minutos_csv(f["TiempoSesionSeg"]),
             _texto_cierre(f),
-        ])
-    nombre = f"historial_accesos_{datetime.now(timezone.utc):%Y%m%d}.csv"
-    headers = {"Content-Disposition": f'attachment; filename="{nombre}"'}
-    if total > TOPE_CSV_HISTORIAL:
-        headers["X-Historial-Truncado"] = str(TOPE_CSV_HISTORIAL)
+        ]
+        for f in filas
+    ]
     log.info("Historial exportado a CSV (%s de %s filas)", len(filas), total)
-    return Response(
-        ("\ufeff" + salida.getvalue()).encode("utf-8"), media_type="text/csv; charset=utf-8", headers=headers
+    return _respuesta_csv(
+        encabezados, contenido, "historial_accesos", TOPE_CSV_HISTORIAL if total > TOPE_CSV_HISTORIAL else None
+    )
+
+
+# ---------------------------------------------------------------------------
+# Estadísticas por portal (solo lectura; sesiones = filas con Resultado = 'OK')
+# ---------------------------------------------------------------------------
+
+TOTAL_PORTAL_CORPORATIVO = "Total Portal Corporativo"
+
+
+def _filtros_estadisticas(desde: str | None = None, hasta: str | None = None) -> db.FiltrosHistorial:
+    return _filtros_historial(desde=desde, hasta=hasta)
+
+
+def _filtros_estadisticas_portal(
+    portal: str | None = None, desde: str | None = None, hasta: str | None = None
+) -> db.FiltrosHistorial:
+    """Como `_filtros_estadisticas`, pero el portal es obligatorio. Junta todos los errores en un solo 422."""
+    errores: dict[str, str] = {}
+    filtros = None
+    try:
+        filtros = _filtros_historial(portal=portal, desde=desde, hasta=hasta)
+    except ErrorValidacion as e:
+        errores = e.errores
+    if not (portal and portal.strip()):
+        errores = {"portal": "Indica el portal.", **errores}
+    if errores:
+        raise ErrorValidacion(errores)
+    return filtros
+
+
+def _estadistica_json(datos: dict) -> dict:
+    return {**datos, "ultimaConexion": _iso_utc(datos["ultimaConexion"])}
+
+
+def _celdas_sesiones(datos: dict, tz_offset_min: int) -> list[str]:
+    """Sesiones · Sesiones medidas · Horas totales · Minutos totales · Promedio por sesión · Última conexión."""
+    return [
+        str(datos["sesiones"]),
+        str(datos["sesionesMedidas"]),
+        _duracion_texto(datos["segundosTotales"]),
+        _minutos_csv(datos["segundosTotales"]),
+        _duracion_texto(datos["promedioSeg"]),
+        _fecha_csv(datos["ultimaConexion"], tz_offset_min),
+    ]
+
+
+def _encabezados_sesiones(tz_offset_min: int) -> list[str]:
+    return [
+        "Sesiones", "Sesiones medidas", "Horas totales", "Minutos totales", "Promedio por sesión",
+        f"Última conexión ({_zona_csv(tz_offset_min)})",
+    ]
+
+
+def _nombre_archivo(texto: str) -> str:
+    """«Energía» → «energia»: solo letras y números ASCII para el nombre del CSV."""
+    ascii_ = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode().lower()
+    return "".join(c if c.isalnum() else "_" for c in ascii_).strip("_") or "portal"
+
+
+@app.get("/api/estadisticas/portales")
+def api_estadisticas_portales(
+    admin: str | None = Depends(require_admin),
+    filtros: db.FiltrosHistorial = Depends(_filtros_estadisticas),
+):
+    datos = db.estadisticas_portales(filtros.desde, filtros.hasta)
+    return {
+        "portales": [_estadistica_json(p) for p in datos["portales"]],
+        "total": _estadistica_json(datos["total"]),
+    }
+
+
+@app.get("/api/estadisticas/portales/csv")
+def api_estadisticas_portales_csv(
+    admin: str | None = Depends(require_admin),
+    filtros: db.FiltrosHistorial = Depends(_filtros_estadisticas),
+    tz_offset_min: int = Query(0, ge=-840, le=840),
+):
+    datos = db.estadisticas_portales(filtros.desde, filtros.hasta)
+    filas = [
+        [_celda_csv(p["portal"]), str(p["usuariosUnicos"]), *_celdas_sesiones(p, tz_offset_min)]
+        for p in datos["portales"]
+    ]
+    total = datos["total"]
+    filas.append([TOTAL_PORTAL_CORPORATIVO, str(total["usuariosUnicos"]), *_celdas_sesiones(total, tz_offset_min)])
+    log.info("Estadísticas por portal exportadas a CSV (%s portales)", len(datos["portales"]))
+    return _respuesta_csv(
+        ["Portal", "Usuarios únicos", *_encabezados_sesiones(tz_offset_min)], filas, "estadisticas_portales"
+    )
+
+
+@app.get("/api/estadisticas/usuarios")
+def api_estadisticas_usuarios(
+    admin: str | None = Depends(require_admin),
+    filtros: db.FiltrosHistorial = Depends(_filtros_estadisticas_portal),
+):
+    filas, truncado = db.estadisticas_usuarios(
+        filtros.portal, filtros.desde, filtros.hasta, TOPE_USUARIOS_ESTADISTICAS
+    )
+    return {
+        "portal": filtros.portal,
+        "filas": [_estadistica_json(f) for f in filas],
+        "total": len(filas),
+        "truncado": truncado,
+    }
+
+
+@app.get("/api/estadisticas/usuarios/csv")
+def api_estadisticas_usuarios_csv(
+    admin: str | None = Depends(require_admin),
+    filtros: db.FiltrosHistorial = Depends(_filtros_estadisticas_portal),
+    tz_offset_min: int = Query(0, ge=-840, le=840),
+):
+    filas, truncado = db.estadisticas_usuarios(
+        filtros.portal, filtros.desde, filtros.hasta, TOPE_USUARIOS_ESTADISTICAS
+    )
+    contenido = [
+        [_celda_csv(f["usuario"]), _celda_csv(f["correo"] or ""), *_celdas_sesiones(f, tz_offset_min)]
+        for f in filas
+    ]
+    log.info("Estadísticas de usuarios exportadas a CSV (%s filas)", len(filas))
+    return _respuesta_csv(
+        ["Usuario", "Correo", *_encabezados_sesiones(tz_offset_min)],
+        contenido,
+        f"estadisticas_{_nombre_archivo(filtros.portal)}_usuarios",
+        TOPE_USUARIOS_ESTADISTICAS if truncado else None,
     )
