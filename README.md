@@ -23,13 +23,14 @@ Desde la v7 incluye además **Logs control de ingresos**: una página de solo le
 
 | Ruta | Página |
 |---|---|
-| `/` | **Portal de administración** (inicio): dos cards, «Logs control de ingresos» y «Centro Administración de contactos» |
+| `/` | **Portal de administración** (inicio): dos cards, «Estadísticas del Portal Corporativo MiraGroup» y «Centro Administración de contactos» |
 | `/contactos` | **Centro Administración de contactos**: la administración de usuarios (hasta la v6 estaba en `/`) |
-| `/historial` | **Logs control de ingresos**: indicadores, gráfico por día, tabla paginada y exportación a Excel |
+| `/estadisticas` | **Estadísticas del Portal Corporativo MiraGroup** (v11): totales por portal y por usuario, detalle por portal y exportación a Excel (ver "Estadísticas") |
+| `/historial` | **Logs control de ingresos** (historial completo): indicadores, gráfico por día, tabla paginada y exportación a Excel. Sin card en el inicio desde la v11; se llega desde «Historial completo» en `/estadisticas` |
 
-Las tres se comportan igual frente a `AUTH_ENABLED`: con `true` exigen sesión válida y `Portal3 = 1 AND Activo = 1`
+Las cuatro se comportan igual frente a `AUTH_ENABLED`: con `true` exigen sesión válida y `Portal3 = 1 AND Activo = 1`
 (si no, muestran "Ingresa desde el Portal Corporativo" o "No tienes permisos"); con `false` se sirven directo.
-Comparten `styles.css` y el encabezado; `/contactos` y `/historial` tienen el enlace «Inicio».
+Comparten `styles.css` y el encabezado; las páginas internas tienen el enlace «Inicio».
 
 ## Cómo funciona el ingreso
 
@@ -50,7 +51,7 @@ Los POST/PUT/DELETE de `/api/*` exigen `Content-Type: application/json` y `X-Req
 `AUTH_ENABLED` (por defecto `true`) activa todo lo anterior. **Hoy está en `false` en Azure de forma temporal**:
 la app ya no se abre desde el portal y, por ahora, no tiene inicio de sesión. Con `AUTH_ENABLED=false`:
 
-- `/`, `/contactos` y `/historial` se muestran directamente. No aparece "Ingresa desde el Portal Corporativo" ni se redirige al portal.
+- `/`, `/contactos`, `/estadisticas` y `/historial` se muestran directamente. No aparece "Ingresa desde el Portal Corporativo" ni se redirige al portal.
 - `/api/*` funciona sin sesión: no lee ni renueva la cookie y no consulta `Portal3`/`Activo` de quien entra.
   `GET /api/me` responde `{"correo": null, "authEnabled": false}`.
 - La interfaz oculta el correo del admin, «Volver al portal» y «Cerrar sesión».
@@ -86,7 +87,11 @@ az containerapp update -n $APP -g $RG --set-env-vars "AUTH_ENABLED=true"
 | `GET /api/historial` | Historial de accesos, 50 por página (Fecha desc). Filtros más `pagina`. → `{filas, total, pagina, tamano, paginas}` |
 | `GET /api/historial/resumen` | Indicadores con los mismos filtros más `tz_offset_min`. → `{total, usuariosUnicos, porPortal, denegados, tiempoPromedioSeg, tiempoTotalSeg, enCurso, cerradasBoton, porDia}` |
 | `POST /api/latido` | **Público** (CORS para `LATIDO_ORIGINS`). Latido de sesión de Energía o MiraStock (ver "Latidos de sesión"). → 204 |
-| `GET /api/historial/csv` | CSV con los mismos filtros, sin paginar (tope 50.000 filas) |
+| `GET /api/historial/csv` | CSV con los mismos filtros más `tz_offset_min`, sin paginar (tope 50.000 filas) |
+| `GET /api/estadisticas/portales` | Totales por portal y total general (`desde`/`hasta`). → `{portales: [...], total}` (ver "Estadísticas") |
+| `GET /api/estadisticas/portales/csv` | El mismo cuadro en CSV, con fila «Total Portal Corporativo» (`tz_offset_min`) |
+| `GET /api/estadisticas/usuarios` | Una fila por usuario de un portal (`portal` obligatorio, `desde`/`hasta`). → `{portal, filas, total, truncado}` |
+| `GET /api/estadisticas/usuarios/csv` | La misma lista en CSV (`tz_offset_min`; tope 5.000 usuarios) |
 
 Los errores siempre vienen como `{"detail": "mensaje en español"}`. `avisoCuenta: true` indica que la operación en
 SQL salió bien pero falló la cuenta de acceso; el `mensaje` trae el motivo y la interfaz lo muestra como aviso.
@@ -103,7 +108,7 @@ app**: los administra el usuario.
 | `Fecha` | `DATETIME2(0)` en UTC |
 | `Correo` | En minúsculas |
 | `Usuario` | Nombre + Apellido; vacío si el correo no está en `UsuariosEntel` (la tabla muestra «—») |
-| `Portal` | `Energía` o `MiraStock` |
+| `Portal` | Hoy `Energía` o `MiraStock`; la app no fija la lista (un portal nuevo en la vista aparece solo) |
 | `Resultado` | `OK` o `Denegado` |
 | `FinalSesion` | `DATETIME2(0)` UTC del último latido; NULL si la sesión no envió latidos |
 | `TiempoSesionSeg` | `FinalSesion − Fecha` en segundos; NULL sin latidos |
@@ -115,11 +120,11 @@ app**: los administra el usuario.
 | Parámetro | Regla |
 |---|---|
 | `correo` | Contiene, sin distinguir mayúsculas (máx. 256). `%`, `_` y `[` se buscan como texto |
-| `portal` | `Energía` o `MiraStock` (sin distinguir mayúsculas) |
+| `portal` | Cualquier nombre de hasta 50 caracteres (desde la v11). `energía`/`mirastock` se normalizan a `Energía`/`MiraStock`; un portal que no existe devuelve 0 filas |
 | `resultado` | `OK` o `Denegado` (sin distinguir mayúsculas) |
 | `desde` / `hasta` | ISO 8601. Con zona se convierte a UTC; sin zona se toma como UTC. `desde` inclusivo, `hasta` exclusivo, `desde < hasta` |
 | `pagina` | Solo `/api/historial`. Entero ≥ 1 (por defecto 1) |
-| `tz_offset_min` | Solo `/resumen`. Minutos a sumar a UTC para agrupar por día local (−840 a 840; Chile = −180 o −240) |
+| `tz_offset_min` | Solo `/resumen` y `/csv`. Minutos a sumar a UTC para agrupar por día local o escribir las fechas del CSV en hora local (−840 a 840; Chile = −180 o −240; por defecto 0 = UTC) |
 
 Un valor inválido responde **422** `{"detail", "errores": {campo: mensaje}}` con todos los campos con error. Las
 fechas de la respuesta vienen en ISO 8601 UTC con `Z` (`2026-10-28T14:05:00Z`).
@@ -138,13 +143,59 @@ La página `/historial` convierte los días locales del navegador a UTC: «Desde
 `tz_offset_min = -new Date().getTimezoneOffset()`. Por defecto muestra los últimos 7 días. Si el rango cruza un
 cambio de horario, la agrupación por día usa un solo desfase (puede correrse 1 h en ese día).
 
-**CSV** («Exportar a Excel»): UTF-8 con BOM, separador `;`, fin de línea CRLF. Columnas `Fecha (UTC)`
-(`AAAA-MM-DD hh:mm:ss`), Usuario, Correo, Portal, Resultado, `Final de sesión (UTC)` (`AAAA-MM-DD hh:mm:ss`) y
+**CSV** («Exportar a Excel»): UTF-8 con BOM, separador `;`, fin de línea CRLF. Columnas `Fecha (<zona>)`
+(`AAAA-MM-DD hh:mm:ss`), Usuario, Correo, Portal, Resultado, `Final de sesión (<zona>)` (`AAAA-MM-DD hh:mm:ss`) y
 `Tiempo de sesión (min)` (minutos enteros truncados; vacío sin latidos) y `Cierre` (los mismos textos que la tabla,
-vacío en lugar de «—»). Una celda que empieza con `=`, `+`, `-`, `@`, tabulador
+vacío en lugar de «—»). Desde la v11 las fechas van en hora local según `tz_offset_min` (la interfaz lo envía) y el
+encabezado lo indica: `Fecha (hora local, UTC-03:00)`; con `tz_offset_min=0` u omitido queda `Fecha (UTC)`.
+Una celda que empieza con `=`, `+`, `-`, `@`, tabulador
 o retorno de carro lleva una `'` adelante (para que Excel no la ejecute como fórmula). El archivo se llama
 `historial_accesos_AAAAMMDD.csv` (fecha UTC). Si hay más de 50.000 filas, trae las más recientes y el header
 `X-Historial-Truncado: 50000`; la interfaz lo avisa.
+
+## Estadísticas
+
+Página `/estadisticas` (v11), solo lectura sobre la misma vista. **Sesión = fila con `Resultado = 'OK'`**; los
+denegados no cuentan como sesión ni como usuario. Un filtro de fechas común (por defecto los últimos 30 días locales)
+y tres niveles en acordeón (`<details>`):
+
+1. **General por portal** (abierto): una fila por portal y la fila «Total Portal Corporativo». Columnas: Portal ·
+   Usuarios únicos · Sesiones · Horas totales · Promedio por sesión · Última conexión.
+   - Horas totales = suma de `TiempoSesionSeg`; el promedio considera solo las sesiones con tiempo medido. Si hay
+     sesiones sin latidos, la celda agrega «medidas: N de M».
+   - En el total, los usuarios únicos se cuentan **sin repetir entre portales** (`GROUPING SETS`); sesiones y horas suman.
+   - Aparecen todos los portales de la vista (`SELECT DISTINCT Portal`), aunque no tengan sesiones en el rango.
+2. **Un bloque por portal**, generado desde la respuesta anterior (sin código por portal), con pestañas:
+   - **Usuarios (general):** Usuario · Correo · Sesiones · Horas totales · Promedio · Última conexión, de más a
+     menos horas (luego más sesiones, luego correo).
+   - **Usuarios (detallado):** la tabla de `/historial` filtrada al portal, con correo, resultado, páginas y CSV.
+   - Cada bloque y pestaña carga sus datos recién al abrirse.
+3. Los niveles 3 y 4 (funcionalidades y subfuncionalidades) se agregarán como otra entrada de `SUBVISTAS` en
+   `estadisticas.js`, con su propio endpoint.
+
+Respuestas (fechas ISO UTC con `Z`; segundos enteros o `null` si no hay tiempo medido):
+
+```json
+GET /api/estadisticas/portales
+{"portales": [{"portal": "Energía", "usuariosUnicos": 6, "sesiones": 29, "segundosTotales": 3589,
+               "promedioSeg": 897, "sesionesMedidas": 4, "ultimaConexion": "2026-10-29T22:39:40Z"}, ...],
+ "total": {"usuariosUnicos": 10, "sesiones": 48, ...}}
+
+GET /api/estadisticas/usuarios?portal=Energía
+{"portal": "Energía", "filas": [{"usuario": "Ana Pérez", "correo": "ana@...", "sesiones": 4, ...}],
+ "total": 6, "truncado": false}
+```
+
+Validación igual que el historial (422 `{detail, errores}`); en `/usuarios` falta `portal` → «Indica el portal.».
+
+**CSV de estadísticas:** mismo formato que el del historial. Columnas: Portal (o Usuario y Correo) · Usuarios
+únicos (solo portales) · Sesiones · Sesiones medidas · Horas totales (texto «52 h 10 min») · Minutos totales
+(número entero) · Promedio por sesión (texto) · `Última conexión (hora local, UTC-03:00)`. Archivos
+`estadisticas_portales_AAAAMMDD.csv` y `estadisticas_<portal>_usuarios_AAAAMMDD.csv` (`<portal>` en minúsculas sin
+tildes, p. ej. `energia`). Más de 5.000 usuarios → `X-Historial-Truncado: 5000`.
+
+La hora local de los CSV usa el desfase del navegador de hoy: en un rango que cruza un cambio de horario, la
+«Última conexión» puede correrse 1 h. En pantalla no pasa (convierte el navegador).
 
 ## Cuentas de acceso en External ID
 
@@ -299,7 +350,9 @@ app/tools/        sync_externalid.py: sincronización inicial de cuentas (se eje
 app/docs/         Guía de ingreso en PDF (ya no se adjunta al correo)
 app/schemas.py    Validaciones de entrada
 app/static/       inicio.html (/), contactos.html + app.js (/contactos), historial.html + historial.js (/historial),
-                  comun.js (API, avisos y encabezado de inicio e historial), styles.css, logoMG.png
+                  estadisticas.html + estadisticas.js (/estadisticas),
+                  comun.js (API, avisos, encabezado, formatos y descarga de CSV de inicio, historial y estadísticas),
+                  styles.css, logoMG.png
 app/templates/    Páginas "Ingresa desde el Portal Corporativo" y "No tienes permisos"
 tests/            pytest (BD, Graph y External ID simulados)
 ```
@@ -379,7 +432,7 @@ Luego usa `SQL_USER=mira_admin_app` y esa clave en el Container App.
 | Suscripción | CreditosCopilot1 (`38b3f030-c7b5-4d38-822b-c533f88cd34a`) |
 | Container App | `ca-mira-admin` en `RG-COPILOT-DEV`, East US |
 | Environment (reutilizado) | `managedEnvironment-rgscripth25prod-818f` (`rg-script-h25-prod`, East US) |
-| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v10` (revisión `ca-mira-admin--0000012`, 2026-10-29) |
+| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v11` (revisión `ca-mira-admin--0000013`, 2026-10-30) |
 | Recursos | 0.25 vCPU, 0.5 GiB, réplicas mín. 0 / máx. 1, ingress externo solo HTTPS (HTTP redirige) |
 | Pull de la imagen | Usuario admin del ACR (guardado como secret del Container App). Con rol Contributor no se puede asignar `AcrPull` a una identidad administrada |
 | Secrets | `sql-password`, `session-secret`, `graph-client-secret` (secreto de la app "Portal Externo - Envio de correos"), `extid-client-secret` (secreto de la app de External ID) |
