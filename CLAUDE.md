@@ -141,7 +141,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Next session: start here
 - **v12 deployed on 2026-10-30.** Ask the user whether login, password change and `/administradores` work in Azure (Claude did not log in there). Each admin with the default password must change it within 72 h.
-- v12 commits (code, then docs) are local; they were not pushed unless the user asked.
+- **Session closed on 2026-10-30** after the v12 deploy; commits `13e114b` (v12 code), `77f756e` (docs) and this closing commit were pushed to `origin/main`.
+- **Next Azure update:** remove `TOKEN_AUDIENCE` from the Container App (`--remove-env-vars TOKEN_AUDIENCE`; the user approved it on 2026-10-30). The app ignores it since v12.
+- `cracion_usuario.txt` (repo root) is the user's local file with the `sp_CrearAdministrador` EXECs (no passwords, per the user). It is in `.gitignore`; Claude must not open, delete or commit it. `body.json` is still untracked and undecided.
 - **v11 follow-ups:**
   - With the user's OK (prod read), open `/estadisticas` in Azure and check that `/api/estadisticas/portales` and `/usuarios` answer 200 with the same totals as the local check.
   - Ask the user whether management wants levels 3/4 (funcionalidades / subfuncionalidades) and where that data will come from. Nothing for them exists yet in the DB.

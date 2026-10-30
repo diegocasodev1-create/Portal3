@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 .claude/settings.local.json
+
+# Notas locales del usuario (EXEC de sp_CrearAdministrador); nunca al repo
+cracion_usuario.txt
