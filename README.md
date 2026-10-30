@@ -7,7 +7,7 @@ App web independiente (FastAPI + HTML/CSS/JS sin librerías) para administrar la
 |---|---|
 | `Portal1` | Portal de Energía |
 | `Portal2` | Portal MiraStock |
-| `Portal3` | Administración de usuarios (esta app) |
+| `Portal3` | Administración de usuarios (desde la v12 es solo un dato: el acceso a esta app lo da `core.AdministradoresPortal`) |
 
 El correo de bienvenida (vía Microsoft Graph) **no se envía al crear el usuario**: el administrador lo envía
 cuando quiere con el botón «Enviar correo» de cada fila.
@@ -23,66 +23,75 @@ Desde la v7 incluye además **Logs control de ingresos**: una página de solo le
 
 | Ruta | Página |
 |---|---|
-| `/` | **Portal de administración** (inicio): dos cards, «Estadísticas del Portal Corporativo MiraGroup» y «Centro Administración de contactos» |
+| `/login` | **Ingreso** (v12): correo y contraseña de administrador. Pública |
+| `/cambiar-contrasena` | **Cambiar contraseña** (v12): obligatoria después de entrar con la contraseña por defecto; también voluntaria |
+| `/` | **Portal de administración** (inicio): tres cards, «Estadísticas del Portal Corporativo MiraGroup», «Centro Administración de contactos» y «Centro de administración principal» |
 | `/contactos` | **Centro Administración de contactos**: la administración de usuarios (hasta la v6 estaba en `/`) |
 | `/estadisticas` | **Estadísticas del Portal Corporativo MiraGroup** (v11): totales por portal y por usuario, detalle por portal y exportación a Excel (ver "Estadísticas") |
 | `/historial` | **Logs control de ingresos** (historial completo): indicadores, gráfico por día, tabla paginada y exportación a Excel. Sin card en el inicio desde la v11; se llega desde «Historial completo» en `/estadisticas` |
+| `/administradores` | **Centro de administración principal** (v12): administradores en cards y edición con la contraseña de cada uno (ver "Administradores") |
 
-Las cuatro se comportan igual frente a `AUTH_ENABLED`: con `true` exigen sesión válida y `Portal3 = 1 AND Activo = 1`
-(si no, muestran "Ingresa desde el Portal Corporativo" o "No tienes permisos"); con `false` se sirven directo.
-Comparten `styles.css` y el encabezado; las páginas internas tienen el enlace «Inicio».
+Sin sesión, toda página redirige (303) a `/login?siguiente=<ruta>`. Con `DebeCambiarContrasena = 1`, redirige a
+`/cambiar-contrasena`. Comparten `styles.css` y el encabezado (nombre del administrador y «Cerrar sesión»); las páginas
+internas tienen el enlace «Inicio».
 
-## Cómo funciona el ingreso
+## Cómo funciona el ingreso (v12)
 
-1. La home de Power Pages obtiene el token del usuario con **`POST /_services/auth/token`** (con GET el portal
-   responde 404; no requiere token antiforgery) y hace un
-   **POST de formulario** (navegación de página completa) a `https://<fqdn>/auth/portal` con el campo `token`.
-2. La app valida el JWT (RS256) con la clave pública del portal, toma el correo (`email` o
-   `preferred_username`) y verifica en SQL `Portal3 = 1 AND Activo = 1`.
-3. Si es válido, crea una cookie de sesión firmada (solo guarda el correo; expira por inactividad
-   según `SESSION_MAX_AGE_MIN`) y redirige a `/` (el inicio).
-4. Cada llamada a `/api/*` vuelve a verificar el permiso en SQL: si a alguien le quitan `Portal3`,
-   pierde el acceso en ese mismo momento.
+Portal3 es independiente del Portal Corporativo y tiene **login propio**. Desde la v12 ya no existen `/auth/portal`
+(entrada con el token de Power Pages) ni `AUTH_ENABLED`: la autenticación está siempre activa.
 
-Los POST/PUT/DELETE de `/api/*` exigen `Content-Type: application/json` y `X-Requested-With: mira-admin`.
+**Administradores:** tabla `core.AdministradoresPortal` (la crea y mantiene el usuario, no esta app). Se crean por SQL
+con `core.sp_CrearAdministrador` (contraseña por defecto `Admin@123456`, `DebeCambiarContrasena = 1`,
+`AlgoritmoHash = 'SHA2_512'`). `core.sp_RestablecerContrasenaAdmin` la vuelve a la por defecto y desbloquea. Altas y
+bajas solo por SQL.
 
-### `AUTH_ENABLED`: desactivar el ingreso (temporal)
+1. `/login` envía `POST /api/auth/login` con `{correo, contrasena}`.
+2. La app busca al administrador por correo (en minúsculas) y verifica la contraseña según `AlgoritmoHash`:
+   - `SHA2_512` (creados o restablecidos por SQL): `SHA-512(sal || contraseña en UTF-16LE)`.
+   - `PBKDF2_SHA256` (contraseñas cambiadas en Portal3): PBKDF2-HMAC-SHA256, 600.000 iteraciones, sal de 32 bytes.
+   - La comparación es en tiempo constante. Si el correo no existe se calcula igual un PBKDF2, así el tiempo de
+     respuesta no revela qué correos son administradores.
+3. Cualquier fallo (correo desconocido, contraseña mala, `Activo = 0`, bloqueado) responde 401 con el mismo mensaje:
+   «Correo o contraseña incorrectos.».
+4. **Bloqueo:** 5 intentos fallidos → `BloqueadoHasta` = ahora + 15 min. Mientras está bloqueado no se verifica la
+   contraseña ni se suman intentos. Un fallo después de un bloqueo vencido empieza la cuenta de nuevo. Un acierto pone
+   `IntentosFallidos = 0`, `BloqueadoHasta = NULL` y `UltimoAcceso` = ahora. El reloj es el de SQL (`SYSUTCDATETIME()`).
+5. **Contraseña por defecto:** con `DebeCambiarContrasena = 1` el login entra, pero toda página redirige a
+   `/cambiar-contrasena` y toda API (salvo `/api/me`, logout y cambio de contraseña) responde 403
+   `{detail, cambioRequerido: true}`. Solo sirve durante **72 h** desde `COALESCE(FechaCambioContrasena, FechaAlta)`;
+   después hay que restablecerla por SQL (requiere que `sp_RestablecerContrasenaAdmin` actualice
+   `FechaCambioContrasena`, ver el ALTER de la v12).
+6. **Migración:** un login correcto con `SHA2_512` y `DebeCambiarContrasena = 0` pasa el hash a PBKDF2 (misma contraseña).
+7. **Política de contraseña nueva:** mínimo 10 caracteres (máximo 128), con mayúscula, minúscula, número y símbolo;
+   distinta de `Admin@123456` y de la actual.
+8. **Límite por IP:** 20 intentos (login + verificación de cards) cada 15 minutos por IP → 429. La IP es la última de
+   `X-Forwarded-For` (la agrega el ingress); en memoria, porque la app corre en una sola réplica.
 
-`AUTH_ENABLED` (por defecto `true`) activa todo lo anterior. **Hoy está en `false` en Azure de forma temporal**:
-la app ya no se abre desde el portal y, por ahora, no tiene inicio de sesión. Con `AUTH_ENABLED=false`:
+**Sesión:** cookie firmada `mira_admin_sesion` (HttpOnly, Secure, SameSite=Lax) con `{id, h}`: el Id del administrador
+y una huella HMAC de su hash. Vence por inactividad (`SESSION_MAX_AGE_MIN`) y cada request válido la renueva. En cada
+página y en cada `/api/*` se vuelve a leer al administrador en SQL: si lo desactivan, lo eliminan o cambia su
+contraseña (en Portal3 o restablecida por SQL), la sesión se corta en ese momento (páginas → `/login`, API → 401).
 
-- `/`, `/contactos`, `/estadisticas` y `/historial` se muestran directamente. No aparece "Ingresa desde el Portal Corporativo" ni se redirige al portal.
-- `/api/*` funciona sin sesión: no lee ni renueva la cookie y no consulta `Portal3`/`Activo` de quien entra.
-  `GET /api/me` responde `{"correo": null, "authEnabled": false}`.
-- La interfaz oculta el correo del admin, «Volver al portal» y «Cerrar sesión».
-- No aplican las reglas "no eliminarse a sí mismo" ni "no quitarse su propio Portal3" (no hay usuario identificado).
-- Se mantienen la CSP, los headers de seguridad y la protección CSRF de `/api/*`.
-- `/auth/portal`, `/auth/logout` y todo el código de autenticación siguen en la app, sin usarse.
-- Al arrancar, el log registra un `WARNING` que avisa que la autenticación está desactivada.
-
-> ⚠️ Sin autenticación, cualquiera que llegue a la URL puede crear, editar y borrar usuarios de producción,
-> enviar correos desde `MAIL_SENDER` y ver y exportar el historial de accesos (con correos).
-> La protección CSRF no lo impide: solo frena a otros sitios web.
-
-Para volver al ingreso desde el portal (no requiere nueva imagen):
-
-```powershell
-az containerapp update -n $APP -g $RG --set-env-vars "AUTH_ENABLED=true"
-```
+Los POST/PUT/DELETE de `/api/*` exigen `Content-Type: application/json` y `X-Requested-With: mira-admin` (también el
+login). Única excepción: `/api/latido`.
 
 ## API
 
 | Método y ruta | Qué hace |
 |---|---|
 | `GET /health` | `{"status":"ok"}` (público) |
-| `POST /auth/portal` | Entrada desde el portal (formulario con `token`) |
-| `POST /auth/logout` | Cierra la sesión |
-| `GET /api/me` | `{"correo": "..."}` del admin conectado (con `AUTH_ENABLED=false`: `{"correo": null, "authEnabled": false}`) |
+| `POST /api/auth/login` | **Público.** `{correo, contrasena}` → 200 `{redirect, debeCambiarContrasena}` + cookie; 401 genérico; 429 por IP. Acepta `?siguiente=` (solo rutas internas) |
+| `POST /api/auth/logout` | Cierra la sesión → `{redirect: "/login"}` |
+| `POST /api/auth/cambiar-contrasena` | `{actual, nueva, confirmacion}` → `{mensaje, redirect}` y cookie nueva. Funciona aunque deba cambiarla |
+| `GET /api/me` | `{id, nombre, correo, debeCambiarContrasena}` del administrador conectado |
+| `GET /api/administradores` | Todos los administradores: `[{id, nombre, correo, ultimoAcceso, estado, bloqueadoHasta, esYo}]` (`estado`: `activo`, `bloqueado` o `inactivo`). Nunca el hash |
+| `POST /api/administradores/{id}/verificar` | `{contrasena}` de ESE administrador → `{permiso, expiraEnSeg: 300, administrador}`. 422 si es incorrecta (suma a su bloqueo), 423 bloqueado, 403 inactivo, 429 por IP |
+| `PUT /api/administradores/{id}` | `{permiso, nombre, correo, nuevaContrasena?, confirmacion?}` → `{administrador, mensaje}`. Sin permiso válido: 403 `{detail, permisoVencido: true}`; correo repetido: 409 |
 | `GET /api/gerencias` | Lista para el desplegable de Gerencia |
 | `GET /api/usuarios` | Lista de usuarios (FechaAlta desc, Id desc) |
 | `POST /api/usuarios` | Inserta (Activo=1, InvitacionEnviada=0) y crea la cuenta de acceso. No envía correo. → 201 `{usuario, mensaje, avisoCuenta}` |
-| `PUT /api/usuarios/{id}` | Edita nombre, apellido, gerencia y portales (el correo no se edita). Si cambia el nombre, lo actualiza en la cuenta de acceso. → `{usuario, mensaje, avisoCuenta}` |
-| `DELETE /api/usuarios/{id}` | Elimina en SQL y luego la cuenta de acceso (un admin no puede eliminarse a sí mismo). → `{mensaje, avisoCuenta}` |
+| `PUT /api/usuarios/{id}` | Edita nombre, apellido, gerencia, cliente y portales (el correo no se edita). Si cambia el nombre, lo actualiza en la cuenta de acceso. → `{usuario, mensaje, avisoCuenta}` |
+| `DELETE /api/usuarios/{id}` | Elimina en SQL y luego la cuenta de acceso. → `{mensaje, avisoCuenta}` |
 | `POST /api/usuarios/{id}/enviar-correo` | Asegura la cuenta de acceso y envía o reenvía el correo de bienvenida (ver abajo) |
 | `GET /api/historial` | Historial de accesos, 50 por página (Fecha desc). Filtros más `pagina`. → `{filas, total, pagina, tamano, paginas}` |
 | `GET /api/historial/resumen` | Indicadores con los mismos filtros más `tz_offset_min`. → `{total, usuariosUnicos, porPortal, denegados, tiempoPromedioSeg, tiempoTotalSeg, enCurso, cerradasBoton, porDia}` |
@@ -95,6 +104,34 @@ az containerapp update -n $APP -g $RG --set-env-vars "AUTH_ENABLED=true"
 
 Los errores siempre vienen como `{"detail": "mensaje en español"}`. `avisoCuenta: true` indica que la operación en
 SQL salió bien pero falló la cuenta de acceso; el `mensaje` trae el motivo y la interfaz lo muestra como aviso.
+
+Sin sesión, toda `/api/*` responde 401 (salvo `/health`, `/api/latido` y `/api/auth/login`/`logout`). La sesión se
+revisa antes que los datos: sin sesión es 401 aunque el body o los filtros sean inválidos.
+
+**Cliente (v12):** `POST`/`PUT /api/usuarios` exigen `cliente` (`Entel`, `MiraGroup` u `Otro`; sin distinguir
+mayúsculas, se guarda con esa escritura) en la columna `core.UsuariosEntel.Cliente`. Al crear, la interfaz lo sugiere por
+el dominio del correo (`entel.pe` → Entel, `miragroup.cl` → MiraGroup, otro → Otro) hasta que se elige a mano. La tabla
+tiene la columna «Cliente» y un filtro por cliente. Desde la v12 ya no existen las reglas «no puedes eliminarte» ni
+«no puedes quitarte Portal3»: el contacto y el administrador son registros distintos.
+
+**Gerencias:** `GET /api/gerencias` es la `UNION` de los `Gerencia` distintos (no vacíos) de `core.StockLurinERI` (contra
+la que compara el agente MiraStock) y de `core.UsuariosEntel`. Un valor que aparece solo en contactos se quita
+corrigiendo esos contactos en SQL (así se quitó «CONSTRUCCION E INFRAESTRUCTURA DE RED» en la v12).
+
+## Administradores
+
+`/administradores` («Centro de administración principal») muestra a todos los administradores en cards: nombre,
+correo, último acceso y estado. Los inactivos y los bloqueados no se pueden abrir.
+
+1. Al elegir una card se pide la contraseña **de ese administrador** (`POST /api/administradores/{id}/verificar`).
+   Los fallos cuentan para el bloqueo de ese administrador (el mismo del login).
+2. Si es correcta, la API entrega un **permiso de edición** firmado (itsdangerous, sal propia) que dura 5 minutos y
+   está atado al Id del administrador, a la sesión de quien lo pidió y a la huella del hash de su contraseña.
+   La interfaz lo guarda solo en memoria y lo descarta al cerrar la ficha.
+3. La ficha permite cambiar nombre, correo y (opcional) la contraseña, con la misma política del cambio obligatorio.
+   Una contraseña nueva cierra las demás sesiones de ese administrador; si es la propia, quien edita sigue conectado.
+4. Altas, bajas y restablecimientos: solo por SQL (`sp_CrearAdministrador`, `sp_RestablecerContrasenaAdmin`).
+
 
 ## Historial de accesos
 
@@ -308,8 +345,8 @@ usuario, no esta app.
   SYSUTCDATETIME()` de la fila con esa llave, `Portal = 'Energía'`, `Resultado = 'OK'`, `Fecha` de las últimas 12 h
   y no cerrada, con la regla de 60 s. El cierre pone además `CierreExplicito = 1`, sin la regla de 60 s. Con `t`
   nunca se insertan filas: si no hay fila con esa llave, no hace nada.
-- **Energía por token:** el token se valida como en `/auth/portal` (RS256, `exp`, emisor), pero con la clave pública de
-  `ENERGIA_PORTAL_URL` (cacheada aparte) y sin `TOKEN_AUDIENCE`. Con el correo del token, en una sola transacción
+- **Energía por token:** el token se valida (RS256, `exp`, emisor) con la clave pública de
+  `ENERGIA_PORTAL_URL` (cacheada en memoria), sin exigir audiencia. Con el correo del token, en una sola transacción
   con `UPDLOCK, HOLDLOCK`:
   - toma la fila **más reciente** de `core.HistorialAccesos` de ese correo, `Portal = 'Energía'`,
     `Resultado = 'OK'` y `COALESCE(FinalSesion, Fecha)` de los últimos 30 minutos, esté abierta o cerrada;
@@ -342,7 +379,8 @@ Mientras alguien tenga abierto Energía o MiraStock, los latidos mantienen activ
 ```
 app/main.py       FastAPI: middlewares (sesión, CSRF, headers de seguridad), rutas y estáticos
 app/config.py     Configuración (pydantic-settings)
-app/auth.py       Token del portal, cookie de sesión, dependencia require_admin
+app/auth.py       Login, cookie de sesión, permisos de edición, límite por IP, require_admin y tokens de Energía
+app/claves.py     Hash de contraseñas (SHA2_512 y PBKDF2_SHA256) y política
 app/db.py         Consultas parametrizadas (pyodbc + ODBC Driver 18)
 app/mailer.py     msal + Graph sendMail + plantilla HTML del correo
 app/externalid.py Cuentas de acceso en External ID (msal + Graph /users)
@@ -350,10 +388,11 @@ app/tools/        sync_externalid.py: sincronización inicial de cuentas (se eje
 app/docs/         Guía de ingreso en PDF (ya no se adjunta al correo)
 app/schemas.py    Validaciones de entrada
 app/static/       inicio.html (/), contactos.html + app.js (/contactos), historial.html + historial.js (/historial),
-                  estadisticas.html + estadisticas.js (/estadisticas),
-                  comun.js (API, avisos, encabezado, formatos y descarga de CSV de inicio, historial y estadísticas),
+                  estadisticas.html + estadisticas.js (/estadisticas), administradores.html + administradores.js,
+                  login.html + login.js, cambiar-contrasena.html + cambiar.js,
+                  comun.js (API, avisos, modales, encabezado, política de contraseñas, formatos y descarga de CSV),
                   styles.css, logoMG.png
-app/templates/    Páginas "Ingresa desde el Portal Corporativo" y "No tienes permisos"
+app/templates/    error.html (página de error, p. ej. 503 si la BD no responde)
 tests/            pytest (BD, Graph y External ID simulados)
 ```
 
@@ -374,33 +413,25 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 - `http://localhost:8000/health` → `{"status":"ok"}`
-- `http://localhost:8000/` sin sesión → "Ingresa desde el Portal Corporativo".
+- `http://localhost:8000/` sin sesión → redirige a `/login`.
 
-### Probar el ingreso real en local
+### Probar el ingreso en local
 
-La app solo acepta tokens firmados por el portal. Para probar en local, inicia sesión en el portal
-con un usuario que tenga `Portal3 = 1`, abre la consola del navegador (F12) **en la página del portal** y ejecuta:
+Ingresa en `http://localhost:8000/login` con un administrador de `core.AdministradoresPortal`. El `.env` local apunta
+a la base de producción: los intentos fallidos suman al bloqueo real y `UltimoAcceso` se actualiza.
 
-```js
-const t = await (await fetch('/_services/auth/token', { method: 'POST' })).text();
-const f = Object.assign(document.createElement('form'), { method: 'POST', action: 'http://localhost:8000/auth/portal' });
-f.append(Object.assign(document.createElement('input'), { type: 'hidden', name: 'token', value: t }));
-document.body.append(f); f.submit();
-```
-
-Chrome, Edge y Firefox aceptan la cookie `Secure` en `http://localhost`. Con `LOG_LEVEL=DEBUG`
-verás en la consola los **nombres** de los claims del token (nunca sus valores), para confirmar
-que trae `email`.
+Chrome, Edge y Firefox aceptan la cookie `Secure` en `http://localhost`.
 
 ### Tests
 
 ```powershell
 pytest                                              # todos
 pytest tests/test_usuarios.py                       # un archivo
-pytest tests/test_auth.py::test_permiso_revocado_corta_en_el_momento   # un test
+pytest tests/test_login.py::test_cinco_fallos_bloquean_15_minutos   # un test
 ```
 
-Los tests no usan la BD ni Graph reales: definen su propia configuración y simulan ambos.
+Los tests no usan la BD ni Graph reales: definen su propia configuración y simulan ambos. Bajan las iteraciones de
+PBKDF2 para ir rápido (`test_claves.py` comprueba que el código usa 600.000).
 
 ---
 
@@ -413,6 +444,10 @@ Ejecútalo conectado a **CopilotKnowledgeDB** (no a `master`):
 CREATE USER mira_admin_app WITH PASSWORD = '<clave segura>';
 GRANT SELECT, INSERT, UPDATE, DELETE ON core.UsuariosEntel TO mira_admin_app;
 GRANT SELECT ON core.StockLurinERI TO mira_admin_app;
+GRANT SELECT, UPDATE ON core.AdministradoresPortal TO mira_admin_app;   -- v12: login y /administradores
+GRANT SELECT ON core.vHistorialAccesos TO mira_admin_app;
+GRANT SELECT, INSERT, UPDATE ON core.HistorialAccesos TO mira_admin_app;  -- latidos de Energía (INSERT: modo token)
+GRANT SELECT, UPDATE ON core.SesionesAgente TO mira_admin_app;           -- latidos de MiraStock
 ```
 
 Luego usa `SQL_USER=mira_admin_app` y esa clave en el Container App.
@@ -426,21 +461,17 @@ Luego usa `SQL_USER=mira_admin_app` y esa clave en el Container App.
 | | |
 |---|---|
 | **URL pública** | https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io |
-| **URL de entrada (la usa la home)** | `POST https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io/auth/portal` (formulario, campo `token`). Sin uso mientras `AUTH_ENABLED=false` |
-| **Autenticación** | `AUTH_ENABLED=false` (temporal desde la v3, ver "`AUTH_ENABLED`: desactivar el ingreso") |
+| **Ingreso** | `https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io/login` (login propio desde la v12; ver "Cómo funciona el ingreso") |
 | Health | `GET https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io/health` → `{"status":"ok"}` |
 | Suscripción | CreditosCopilot1 (`38b3f030-c7b5-4d38-822b-c533f88cd34a`) |
 | Container App | `ca-mira-admin` en `RG-COPILOT-DEV`, East US |
 | Environment (reutilizado) | `managedEnvironment-rgscripth25prod-818f` (`rg-script-h25-prod`, East US) |
-| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v11` (revisión `ca-mira-admin--0000013`, 2026-10-30) |
+| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v12` (revisión `ca-mira-admin--0000014`, 2026-10-30) |
 | Recursos | 0.25 vCPU, 0.5 GiB, réplicas mín. 0 / máx. 1, ingress externo solo HTTPS (HTTP redirige) |
 | Pull de la imagen | Usuario admin del ACR (guardado como secret del Container App). Con rol Contributor no se puede asignar `AcrPull` a una identidad administrada |
 | Secrets | `sql-password`, `session-secret`, `graph-client-secret` (secreto de la app "Portal Externo - Envio de correos"), `extid-client-secret` (secreto de la app de External ID) |
 | Correo | `MAIL_ENABLED=true`, `MAIL_SENDER=no-reply@miragroup.cl`, `GRAPH_CLIENT_ID=e722c6e6-d604-4c2d-88ad-01c62a2c9235` (activado el 2026-10-20) |
 | Firewall SQL | Regla existente `AllowAllWindowsAzureIps` (0.0.0.0) en `sqlcopilotprd01` |
-
-La home de Power Pages hace `POST /_services/auth/token` en el portal y luego un POST de formulario
-(navegación completa) a la URL de entrada con el campo `token`.
 
 Con réplicas mínimas 0, la primera visita después de un rato sin uso puede tardar unos segundos (arranque en frío).
 
@@ -552,10 +583,7 @@ Son precios de lista aproximados para East US. Confírmalos en la calculadora de
 
 ### Pendientes de seguridad recomendados
 
-- **Volver a exigir autenticación** (`AUTH_ENABLED=true` o un login propio). Mientras esté en `false`, la app y el
-  envío de correo quedan abiertos a cualquiera que tenga la URL.
 - Usar el usuario dedicado `mira_admin_app` (ver "Base de datos: usuario dedicado") en vez de `sqladmin`, y cambiar la clave de `sqladmin`.
-- Usar en Azure un `SESSION_SECRET` distinto del local.
 - La regla `AllowAllWindowsAzureIps` permite conexiones desde cualquier recurso de Azure, también de otros clientes.
   La opción más cerrada es un environment con VNet y un private endpoint al SQL (tiene costo: pedir OK antes).
 - Si más adelante se obtiene un rol con permiso para asignar roles (Owner o User Access Administrator), se puede
