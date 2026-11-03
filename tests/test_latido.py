@@ -70,11 +70,13 @@ def test_mirastock_sin_llave_400(cliente, bd):
     assert bd.llamadas_latido == []
 
 
-def test_mirastock_llave_vencida_igual_acepta_el_latido(cliente, bd):
-    # ExpiraEn solo controla la entrada al chat: la sesión puede seguir abierta después.
-    bd.agregar_sesion_agente(LLAVE, bd.ahora - timedelta(hours=3), expira_en=bd.ahora - timedelta(hours=2))
+def test_mirastock_llave_vencida_con_sesion_viva_acepta_el_latido_y_la_renueva(cliente, bd):
+    # ExpiraEn no decide si la sesión sigue: manda la última actividad (v15: 10 min). El latido renueva la llave.
+    bd.agregar_sesion_agente(LLAVE, bd.ahora - timedelta(hours=3), final_sesion=bd.ahora - timedelta(minutes=2),
+                             expira_en=bd.ahora - timedelta(hours=2))
     assert latir(cliente, mirastock()).status_code == 204
     assert bd.sesiones_agente[LLAVE]["FinalSesion"] == bd.ahora
+    assert bd.sesiones_agente[LLAVE]["ExpiraEn"] == bd.ahora + timedelta(minutes=30)
 
 
 def test_mirastock_llave_de_mas_de_12_horas_no_se_actualiza(cliente, bd):
@@ -463,11 +465,15 @@ def test_db_latido_mirastock_sql(cursor_latido, rowcount, esperado):
     assert db.latido_mirastock(LLAVE) is esperado
     [(sql, params)] = cur.ejecutados
     assert params == (LLAVE,)
-    assert sql.startswith("UPDATE core.SesionesAgente SET FinalSesion = SYSUTCDATETIME()")
+    assert sql.startswith("UPDATE core.SesionesAgente SET FinalSesion = SYSUTCDATETIME(),")
+    # v15: renueva la llave a ahora + 30 min sin acortarla.
+    assert ("ExpiraEn = CASE WHEN ExpiraEn > DATEADD(MINUTE, 30, SYSUTCDATETIME()) THEN ExpiraEn"
+            " ELSE DATEADD(MINUTE, 30, SYSUTCDATETIME()) END WHERE") in sql
     assert "WHERE Token = ? AND CreadoEn >= DATEADD(HOUR, -12, SYSUTCDATETIME())" in sql
     assert "(FinalSesion IS NULL OR FinalSesion < DATEADD(SECOND, -60, SYSUTCDATETIME()))" in sql
     assert "AND COALESCE(CierreExplicito, 0) = 0" in sql
-    assert "ExpiraEn" not in sql and "CierreExplicito = 1" not in sql
+    assert sql.endswith(" AND COALESCE(FinalSesion, CreadoEn) >= DATEADD(MINUTE, -10, SYSUTCDATETIME())")
+    assert "CierreExplicito = 1" not in sql and sql.count("?") == 1
 
 
 @pytest.mark.parametrize("fila, insertada", [((True,), True), ((False,), False)])
@@ -505,6 +511,7 @@ def test_db_cierre_mirastock_sql(cursor_latido, rowcount, esperado):
     assert "CierreExplicito = 1" in sql
     assert ("WHERE Token = ? AND CreadoEn >= DATEADD(HOUR, -12, SYSUTCDATETIME())"
             " AND COALESCE(CierreExplicito, 0) = 0") in sql
+    assert sql.endswith(" AND COALESCE(FinalSesion, CreadoEn) >= DATEADD(MINUTE, -10, SYSUTCDATETIME())")
     assert "SECOND, -60" not in sql  # sin la regla de 60 s
 
 
@@ -550,7 +557,8 @@ def test_cierre_mirastock_anula_expira_en(cliente, bd):
 
 def test_cierre_mirastock_no_mueve_expira_en_ya_vencido(cliente, bd):
     vencida = bd.ahora - timedelta(hours=1)
-    bd.agregar_sesion_agente(LLAVE, bd.ahora - timedelta(hours=2), expira_en=vencida)
+    bd.agregar_sesion_agente(LLAVE, bd.ahora - timedelta(hours=2), final_sesion=bd.ahora - timedelta(minutes=3),
+                             expira_en=vencida)
     latir(cliente, cierre_mirastock())
     assert bd.sesiones_agente[LLAVE]["ExpiraEn"] == vencida
     assert bd.sesiones_agente[LLAVE]["CierreExplicito"] is True
@@ -818,6 +826,7 @@ def test_db_latido_energia_llave_sql(cursor_latido, rowcount, esperado):
             " AND Fecha >= DATEADD(HOUR, -12, SYSUTCDATETIME())") in sql
     assert "AND COALESCE(CierreExplicito, 0) = 0" in sql
     assert "(FinalSesion IS NULL OR FinalSesion < DATEADD(SECOND, -60, SYSUTCDATETIME()))" in sql
+    assert sql.endswith(" AND COALESCE(FinalSesion, Fecha) >= DATEADD(MINUTE, -10, SYSUTCDATETIME())")
     assert "CierreExplicito = 1" not in sql and "INSERT" not in sql
 
 
@@ -830,5 +839,141 @@ def test_db_cierre_energia_llave_sql(cursor_latido, rowcount, esperado):
     assert sql.startswith("UPDATE core.HistorialAccesos SET FinalSesion = SYSUTCDATETIME(), CierreExplicito = 1")
     assert ("WHERE Token = ? AND Portal = N'Energía' AND Resultado = N'OK'"
             " AND Fecha >= DATEADD(HOUR, -12, SYSUTCDATETIME())"
-            " AND COALESCE(CierreExplicito, 0) = 0") in sql
+            " AND COALESCE(CierreExplicito, 0) = 0"
+            " AND COALESCE(FinalSesion, Fecha) >= DATEADD(MINUTE, -10, SYSUTCDATETIME())") in sql
     assert "SECOND, -60" not in sql and "INSERT" not in sql
+
+
+# ---------------------------------------------------------------------------
+# v15: ventana de 10 min (sesión «viva») y renovación de la llave de MiraStock
+# ---------------------------------------------------------------------------
+
+# (minutos desde la última actividad, ¿sigue viva?). El límite de 10 min es inclusivo.
+VENTANA = [(2, True), (9, True), (10, True), (11, False), (45, False)]
+
+
+@pytest.mark.parametrize("hace_min, viva", VENTANA)
+def test_v15_mirastock_latido_con_final_de_sesion(cliente, bd, hace_min, viva):
+    anterior = bd.ahora - timedelta(minutes=hace_min)
+    expira = bd.ahora - timedelta(minutes=1)
+    bd.agregar_sesion_agente(LLAVE, bd.ahora - timedelta(hours=1), final_sesion=anterior, expira_en=expira)
+    assert latir(cliente, mirastock()).status_code == 204
+    sesion = bd.sesiones_agente[LLAVE]
+    assert sesion["FinalSesion"] == (bd.ahora if viva else anterior)
+    assert sesion["ExpiraEn"] == (bd.ahora + timedelta(minutes=30) if viva else expira)
+
+
+@pytest.mark.parametrize("hace_min, viva", VENTANA)
+def test_v15_mirastock_latido_sin_final_de_sesion_usa_creado_en(cliente, bd, hace_min, viva):
+    creada = bd.ahora - timedelta(minutes=hace_min)
+    bd.agregar_sesion_agente(LLAVE, creada)  # ExpiraEn = CreadoEn + 30 min, como el flujo
+    assert latir(cliente, mirastock()).status_code == 204
+    sesion = bd.sesiones_agente[LLAVE]
+    assert sesion["FinalSesion"] == (bd.ahora if viva else None)
+    assert sesion["ExpiraEn"] == (bd.ahora + timedelta(minutes=30) if viva else creada + timedelta(minutes=30))
+
+
+def test_v15_mirastock_renueva_la_llave_a_30_min_desde_ahora(cliente, bd):
+    # Llave del flujo: CreadoEn + 30 min. A los 5 min, el latido la lleva a ahora + 30 (vence 5 min después).
+    bd.agregar_sesion_agente(LLAVE, bd.ahora - timedelta(minutes=5))
+    assert bd.sesiones_agente[LLAVE]["ExpiraEn"] == bd.ahora + timedelta(minutes=25)
+    latir(cliente, mirastock())
+    assert bd.sesiones_agente[LLAVE]["ExpiraEn"] == bd.ahora + timedelta(minutes=30)
+
+
+def test_v15_mirastock_nunca_acorta_la_llave(cliente, bd):
+    larga = bd.ahora + timedelta(hours=2)
+    bd.agregar_sesion_agente(LLAVE, bd.ahora - timedelta(minutes=5), expira_en=larga)
+    latir(cliente, mirastock())
+    assert bd.sesiones_agente[LLAVE]["FinalSesion"] == bd.ahora
+    assert bd.sesiones_agente[LLAVE]["ExpiraEn"] == larga
+
+
+def test_v15_mirastock_regla_de_60_segundos_no_renueva(cliente, bd):
+    expira = bd.ahora + timedelta(minutes=20)
+    anterior = bd.ahora - timedelta(seconds=30)
+    bd.agregar_sesion_agente(LLAVE, bd.ahora - timedelta(minutes=5), final_sesion=anterior, expira_en=expira)
+    latir(cliente, mirastock())
+    assert bd.sesiones_agente[LLAVE]["FinalSesion"] == anterior
+    assert bd.sesiones_agente[LLAVE]["ExpiraEn"] == expira
+
+
+def test_v15_mirastock_latidos_seguidos_mantienen_la_sesion(cliente, bd):
+    # Latidos cada 2 min durante 1 h: la sesión nunca sale de la ventana y la llave sigue vigente.
+    bd.agregar_sesion_agente(LLAVE, bd.ahora)
+    for _ in range(30):
+        bd.ahora += timedelta(minutes=2)
+        latir(cliente, mirastock())
+    sesion = bd.sesiones_agente[LLAVE]
+    assert sesion["FinalSesion"] == bd.ahora and sesion["ExpiraEn"] == bd.ahora + timedelta(minutes=30)
+
+
+def test_v15_mirastock_latido_tardio_no_infla_la_sesion(cliente, bd):
+    # La PC durmió 40 min: el latido y el cierre al despertar se ignoran y la sesión queda como terminó.
+    bd.agregar_sesion_agente(LLAVE, bd.ahora)
+    bd.ahora += timedelta(minutes=2)
+    latir(cliente, mirastock())
+    ultima = bd.ahora
+    bd.ahora += timedelta(minutes=40)
+    assert latir(cliente, mirastock()).status_code == 204
+    assert latir(cliente, cierre_mirastock()).status_code == 204
+    sesion = bd.sesiones_agente[LLAVE]
+    assert sesion["FinalSesion"] == ultima and sesion["CierreExplicito"] is False
+
+
+@pytest.mark.parametrize("hace_min, viva", VENTANA)
+@pytest.mark.parametrize("con_final", [True, False])
+def test_v15_cierre_mirastock_fuera_de_la_ventana_se_ignora(cliente, bd, hace_min, viva, con_final):
+    momento = bd.ahora - timedelta(minutes=hace_min)
+    expira = bd.ahora + timedelta(minutes=5)
+    if con_final:
+        bd.agregar_sesion_agente(LLAVE, bd.ahora - timedelta(hours=1), final_sesion=momento, expira_en=expira)
+    else:
+        bd.agregar_sesion_agente(LLAVE, momento, expira_en=expira)
+    assert latir(cliente, cierre_mirastock()).status_code == 204
+    sesion = bd.sesiones_agente[LLAVE]
+    if viva:
+        assert sesion["CierreExplicito"] is True and sesion["FinalSesion"] == bd.ahora and sesion["ExpiraEn"] == bd.ahora
+    else:
+        assert sesion["CierreExplicito"] is False
+        assert sesion["FinalSesion"] == (momento if con_final else None) and sesion["ExpiraEn"] == expira
+
+
+@pytest.mark.parametrize("hace_min, viva", VENTANA)
+def test_v15_energia_llave_latido_con_final_de_sesion(cliente, bd, hace_min, viva):
+    anterior = bd.ahora - timedelta(minutes=hace_min)
+    fila = fila_llave(bd, hace_min=60, final_sesion=anterior)
+    assert latir(cliente, energia_llave()).status_code == 204
+    assert fila["FinalSesion"] == (bd.ahora if viva else anterior)
+
+
+@pytest.mark.parametrize("hace_min, viva", VENTANA)
+def test_v15_energia_llave_latido_sin_final_de_sesion_usa_fecha(cliente, bd, hace_min, viva):
+    fila = fila_llave(bd, hace_min=hace_min)
+    assert latir(cliente, energia_llave()).status_code == 204
+    assert fila["FinalSesion"] == (bd.ahora if viva else None)
+    assert len(bd.accesos) == 1  # nunca inserta
+
+
+@pytest.mark.parametrize("hace_min, viva", VENTANA)
+@pytest.mark.parametrize("con_final", [True, False])
+def test_v15_energia_llave_cierre_fuera_de_la_ventana_se_ignora(cliente, bd, hace_min, viva, con_final):
+    momento = bd.ahora - timedelta(minutes=hace_min)
+    fila = fila_llave(bd, hace_min=60, final_sesion=momento) if con_final else fila_llave(bd, hace_min=hace_min)
+    assert latir(cliente, energia_llave(cierre=True)).status_code == 204
+    if viva:
+        assert fila["CierreExplicito"] is True and fila["FinalSesion"] == bd.ahora
+    else:
+        assert fila["CierreExplicito"] is False and fila["FinalSesion"] == (momento if con_final else None)
+
+
+def test_v15_energia_modo_token_sin_ventana_de_10_min(cliente, bd):
+    # El modo token no cambia: sigue con su ventana de 30 min (una fila de hace 20 min se extiende).
+    fila = bd.agregar_fila_acceso(CORREO, bd.ahora - timedelta(minutes=40), bd.ahora - timedelta(minutes=20))
+    assert latir(cliente, energia()).status_code == 204
+    assert fila["FinalSesion"] == bd.ahora and len(bd.accesos) == 1
+
+
+def test_v15_sql_del_modo_token_no_cambia():
+    for sql in (db._SQL_LATIDO_ENERGIA, db._SQL_CIERRE_ENERGIA):
+        assert "MINUTE, -10" not in sql

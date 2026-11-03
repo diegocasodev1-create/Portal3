@@ -8,7 +8,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
 
-## Current status (as of 2026-11-03; v13 + v14 deployed that day)
+## Current status (as of 2026-11-03; v13 + v14 deployed that day; v15 ready locally, NOT deployed)
+
+### v15 (2026-11-03): server-side protection against inflated sessions + MiraStock key renewal — NOT DEPLOYED
+- Asked for by the user. The MiraStock and Energía JS already close the whole session after 30 min without activity and send no heartbeats without real activity (the user's side); v15 protects against late heartbeats (PC waking up, old tab, cached JS).
+- **758 tests pass** (47 new `test_v15_*` in `tests/test_latido.py`; 4 old tests adjusted to live sessions). No static changes (`?v=15` stays). Only SQL in `db.py` changed; `main.py` and responses are unchanged (204 even when nothing is updated).
+- «Alive» = last activity ≤ 10 min ago (inclusive): `db._VIVA_MIRASTOCK` = `COALESCE(FinalSesion, CreadoEn) >= DATEADD(MINUTE, -10, SYSUTCDATETIME())`, `db._VIVA_ENERGIA` = `COALESCE(FinalSesion, Fecha) >= ...`. Appended to `_SQL_LATIDO_MIRASTOCK`, `_SQL_CIERRE_MIRASTOCK`, `_SQL_LATIDO_ENERGIA_LLAVE` and `_SQL_CIERRE_ENERGIA_LLAVE`. A late close does not mark «Botón», move FinalSesion or touch ExpiraEn. The Energía token mode (`latido_energia`/`cierre_energia`, 30-min window) is unchanged.
+- MiraStock heartbeat also renews the key in the same UPDATE: `ExpiraEn = CASE WHEN ExpiraEn > now+30 THEN ExpiraEn ELSE now+30 END` (never shortens; user's option A, 2026-11-03). A heartbeat skipped by the 60 s rule does not renew.
+- Data from the user: the flow `GenerarAccesoMiraStock` creates keys with `ExpiraEn = DATEADD(MINUTE, 30, SYSUTCDATETIME())`; `BDFalsa.agregar_sesion_agente` now defaults to +30 min.
+- Pending: the user's OK for build + deploy of image v15.
 
 ### v14 (2026-11-03): «Sin actividad» / «No medida» sessions — DEPLOYED
 - Asked for by the user. One image **v14** will carry v13 + v14 (the user's decision, 2026-11-03); v13 was never deployed on its own. One commit per version.
@@ -311,16 +319,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - **Sync tool:** `python -m app.tools.sync_externalid [--apply]` reads `db.listar_usuarios_con_acceso()`. It exits 2 and touches nothing if External ID is disabled or missing credentials. This reads the **production** table, so the user approves each run.
 - **Session heartbeats (`POST /api/latido`, v8):**
   - Public: no `require_admin`, no CSRF header, no cookies. Body JSON ≤ 8 KB (Content-Length and streamed size are both checked), `Content-Type` `application/json` or `text/plain` (for `sendBeacon`). The handler is `async` and runs token validation and DB calls with `run_in_threadpool`.
-  - `{"tipo":"mirastock","t":<GUID>}` → `db.latido_mirastock` (UPDATE `core.SesionesAgente` by Token, CreadoEn within 12 h, 60 s rule; ignores ExpiraEn). The GUID is normalized with `uuid.UUID`.
+  - `{"tipo":"mirastock","t":<GUID>}` → `db.latido_mirastock` (UPDATE `core.SesionesAgente` by Token, CreadoEn within 12 h, 60 s rule, alive = `COALESCE(FinalSesion, CreadoEn)` ≤ 10 min ago (v15); accepted even after ExpiraEn, and renews it to now + 30 min without shortening it (v15)). The GUID is normalized with `uuid.UUID`.
   - `{"tipo":"energia","token":...}` → `auth.validar_token_energia` (via `auth._validar_token`, separate key cache `auth.clave_energia` from `ENERGIA_PORTAL_URL`, issuer = Energía host, no audience check) → `db.latido_energia(correo)`: one batch with `UPDLOCK, HOLDLOCK` that updates the latest OK Energía row whose `COALESCE(FinalSesion, Fecha)` is within 30 min (60 s rule via `CASE`, so a fast repeat never INSERTs), else INSERTs `Fecha = FinalSesion = SYSUTCDATETIME()`. It relies on the connection's transaction (`autocommit=False`), with no BEGIN TRAN.
-  - v10: `{"tipo":"energia","t":<GUID>}` → `db.latido_energia_llave` / `db.cierre_energia_llave`: a plain UPDATE of `core.HistorialAccesos` by `Token`, `Portal = N'Energía'`, `Resultado = N'OK'`, `Fecha` within 12 h, not closed; the heartbeat has the 60 s rule, the close does not and sets `CierreExplicito = 1`. Never INSERTs (the flow creates the row). `t` and `token` together, or neither (key presence, even `null`) → 400 «Envía la llave (t) o el token, no ambos.». The GUID goes through `main._llave_latido`, shared with MiraStock.
+  - v10: `{"tipo":"energia","t":<GUID>}` → `db.latido_energia_llave` / `db.cierre_energia_llave`: a plain UPDATE of `core.HistorialAccesos` by `Token`, `Portal = N'Energía'`, `Resultado = N'OK'`, `Fecha` within 12 h, not closed, alive (`COALESCE(FinalSesion, Fecha)` ≤ 10 min ago, v15; also for the close); the heartbeat has the 60 s rule, the close does not and sets `CierreExplicito = 1`. Never INSERTs (the flow creates the row). `t` and `token` together, or neither (key presence, even `null`) → 400 «Envía la llave (t) o el token, no ambos.». The GUID goes through `main._llave_latido`, shared with MiraStock.
   - Responses: 204 whenever valid (never reveals whether a key exists), 400 bad body, 401 bad token, 503 DB error or `auth.ClaveNoDisponible` (Energía key download failed; it subclasses `TokenInvalido`).
   - CORS: custom `cors_latido` middleware for this route only. Origins from `LATIDO_ORIGINS` (normalized: lowercase, no trailing slash), POST only, header Content-Type, no credentials, Max-Age 600. A preflight or POST with a disallowed Origin → 403. No Origin → processed.
   - Never log `t` or the token (rejections are logged at DEBUG with the reason only). `main._SinLatidos` filters `/api/latido` out of `uvicorn.access`.
   - Tests: `BDFalsa.latido_*` reproduce the SQL rules with `bd.ahora`; `crear_token_energia` + autouse fixture `clave_de_energia` (`estado["error"]` simulates the key being unavailable).
 - **Static cache busting:** pages reference `/static/*.css|js?v=15`. Bump it on every release that changes static files.
 - **Explicit close (v9):** optional `"cierre"` in `/api/latido`, which must be a real bool (`type(x) is bool`; anything else → 400, `false` = normal heartbeat).
-  - MiraStock: `db.cierre_mirastock` sets FinalSesion, `CierreExplicito = 1`, and `ExpiraEn = now` if it was in the future (the key is revoked). No 60 s rule, and never on an already closed session. Normal heartbeats add `COALESCE(CierreExplicito, 0) = 0`.
+  - MiraStock: `db.cierre_mirastock` sets FinalSesion, `CierreExplicito = 1`, and `ExpiraEn = now` if it was in the future (the key is revoked). No 60 s rule, and never on an already closed session or one that is no longer alive (v15). Normal heartbeats add `COALESCE(CierreExplicito, 0) = 0`.
   - Energía: `_SQL_ENERGIA_INICIO` picks the latest row in the window (no closed filter) with `UPDLOCK, HOLDLOCK`. `UPDATE ... OUTPUT deleted.* INTO @previa` captures its prior state.
     - `latido_energia`: open → extend (60 s rule); closed ≥ 60 s ago or no row → INSERT; closed < 60 s ago → ignored.
     - `cierre_energia`: closes it only if open, and never inserts.

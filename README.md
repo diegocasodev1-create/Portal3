@@ -356,17 +356,25 @@ usuario, no esta app.
     Energía>"}`. Hay que mandar `t` o `token`: los dos juntos, o ninguno, → 400.
   - Campo opcional `"cierre": true` en los dos: el usuario cerró con «Atrás» o «Cerrar sesión» (MiraStock lo manda
     con `sendBeacon`). Si falta o es `false`, es un latido normal; cualquier otro valor (`null`, `"true"`, `1`…) → 400.
+- **Sesión viva (v15):** un latido o un cierre solo cuentan si la última actividad registrada fue hace 10 minutos o
+  menos: `COALESCE(FinalSesion, CreadoEn)` en MiraStock y `COALESCE(FinalSesion, Fecha)` en Energía por llave
+  (`>= DATEADD(MINUTE, -10, SYSUTCDATETIME())`, límite inclusivo). Si pasó más, la sesión ya terminó por inactividad y
+  el latido o cierre tardío (PC que despertó, pestaña vieja, JS en caché) se ignora: no mueve `FinalSesion`, no marca
+  «Botón» y no renueva la llave. La respuesta sigue siendo 204. Los JS de los portales ya cierran la sesión a los
+  30 min sin actividad; esto es la protección del lado del servidor. El modo token de Energía no cambia.
 - **MiraStock:** `UPDATE core.SesionesAgente SET FinalSesion = SYSUTCDATETIME()` de esa llave si se creó hace menos
-  de 12 h y no está cerrada (`COALESCE(CierreExplicito, 0) = 0`). Se acepta aunque ya pasó su `ExpiraEn` (eso solo
-  controla la entrada al chat).
+  de 12 h, no está cerrada (`COALESCE(CierreExplicito, 0) = 0`) y sigue viva. Se acepta aunque ya pasó su `ExpiraEn`.
+  En el mismo UPDATE (v15) **renueva la llave**: `ExpiraEn` pasa a ahora + 30 min, sin acortarla nunca si ya vencía
+  después. El flujo `GenerarAccesoMiraStock` crea las llaves con 30 min. Un latido ignorado por la regla de 60 s
+  tampoco renueva.
 - **MiraStock con cierre:** sin la regla de 60 s, pone `FinalSesion = SYSUTCDATETIME()`, `CierreExplicito = 1` y
   adelanta `ExpiraEn` a ahora si estaba en el futuro: la llave queda anulada y el agente ya no la acepta. Una sesión ya
-  cerrada no se vuelve a cerrar.
+  cerrada, o que ya no está viva (v15), no se toca.
 - **Energía por llave (`t`, v10):** el flujo `ConsultarAccesoPortal` guarda en `Token` la llave que genera la card
   de Energía, en el mismo INSERT de la fila. El latido hace `UPDATE core.HistorialAccesos SET FinalSesion =
   SYSUTCDATETIME()` de la fila con esa llave, `Portal = 'Energía'`, `Resultado = 'OK'`, `Fecha` de las últimas 12 h
-  y no cerrada, con la regla de 60 s. El cierre pone además `CierreExplicito = 1`, sin la regla de 60 s. Con `t`
-  nunca se insertan filas: si no hay fila con esa llave, no hace nada.
+  no cerrada y viva (v15), con la regla de 60 s. El cierre pone además `CierreExplicito = 1`, sin la regla de 60 s,
+  y también exige que la sesión siga viva. Con `t` nunca se insertan filas: si no hay fila con esa llave, no hace nada.
 - **Energía por token:** el token se valida (RS256, `exp`, emisor) con la clave pública de
   `ENERGIA_PORTAL_URL` (cacheada en memoria), sin exigir audiencia. Con el correo del token, en una sola transacción
   con `UPDLOCK, HOLDLOCK`:

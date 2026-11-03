@@ -316,11 +316,20 @@ def actualizar_admin(admin_id: int, nombre: str, correo: str) -> bool:
 # ---------------------------------------------------------------------------
 
 # Un latido no reescribe FinalSesion si el anterior llegó hace menos de 60 s, y nunca toca una sesión cerrada.
+# v15: una sesión está «viva» si su última actividad (FinalSesion, o CreadoEn/Fecha sin latidos) fue hace
+# 10 min o menos. Un latido o cierre tardío (PC que despertó, pestaña vieja, JS en caché) se ignora.
+_VIVA_MIRASTOCK = " AND COALESCE(FinalSesion, CreadoEn) >= DATEADD(MINUTE, -10, SYSUTCDATETIME())"
+_VIVA_ENERGIA = " AND COALESCE(FinalSesion, Fecha) >= DATEADD(MINUTE, -10, SYSUTCDATETIME())"
+
+# v15: el latido renueva la llave a ahora + 30 min, sin acortar nunca un ExpiraEn posterior.
 _SQL_LATIDO_MIRASTOCK = (
-    "UPDATE core.SesionesAgente SET FinalSesion = SYSUTCDATETIME()"
+    "UPDATE core.SesionesAgente SET FinalSesion = SYSUTCDATETIME(),"
+    " ExpiraEn = CASE WHEN ExpiraEn > DATEADD(MINUTE, 30, SYSUTCDATETIME()) THEN ExpiraEn"
+    " ELSE DATEADD(MINUTE, 30, SYSUTCDATETIME()) END"
     " WHERE Token = ? AND CreadoEn >= DATEADD(HOUR, -12, SYSUTCDATETIME())"
     " AND COALESCE(CierreExplicito, 0) = 0"
     " AND (FinalSesion IS NULL OR FinalSesion < DATEADD(SECOND, -60, SYSUTCDATETIME()))"
+    + _VIVA_MIRASTOCK
 )
 
 # Cierre con botón: sin la regla de 60 s. ExpiraEn se adelanta a ahora, así el agente ya no acepta la llave.
@@ -330,6 +339,7 @@ _SQL_CIERRE_MIRASTOCK = (
     " ExpiraEn = CASE WHEN ExpiraEn > SYSUTCDATETIME() THEN SYSUTCDATETIME() ELSE ExpiraEn END,"
     " CierreExplicito = 1"
     " WHERE Token = ? AND CreadoEn >= DATEADD(HOUR, -12, SYSUTCDATETIME()) AND COALESCE(CierreExplicito, 0) = 0"
+    + _VIVA_MIRASTOCK
 )
 
 # Energía: la fila activa es la MÁS RECIENTE de la ventana de 30 min (abierta o cerrada); después se decide
@@ -383,6 +393,7 @@ _SQL_LATIDO_ENERGIA_LLAVE = (
     " AND Fecha >= DATEADD(HOUR, -12, SYSUTCDATETIME())"
     " AND COALESCE(CierreExplicito, 0) = 0"
     " AND (FinalSesion IS NULL OR FinalSesion < DATEADD(SECOND, -60, SYSUTCDATETIME()))"
+    + _VIVA_ENERGIA
 )
 
 # Cierre por llave: sin la regla de 60 s.
@@ -391,6 +402,7 @@ _SQL_CIERRE_ENERGIA_LLAVE = (
     " WHERE Token = ? AND Portal = N'Energía' AND Resultado = N'OK'"
     " AND Fecha >= DATEADD(HOUR, -12, SYSUTCDATETIME())"
     " AND COALESCE(CierreExplicito, 0) = 0"
+    + _VIVA_ENERGIA
 )
 
 

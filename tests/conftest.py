@@ -235,7 +235,7 @@ class BDFalsa:
 
     def agregar_sesion_agente(self, token, creado_en, final_sesion=None, expira_en=None, cierre=False):
         self.sesiones_agente[token] = {
-            "CreadoEn": creado_en, "ExpiraEn": expira_en or creado_en + timedelta(minutes=10),
+            "CreadoEn": creado_en, "ExpiraEn": expira_en or creado_en + timedelta(minutes=30),  # como GenerarAccesoMiraStock
             "FinalSesion": final_sesion, "CierreExplicito": cierre,
         }
 
@@ -251,9 +251,15 @@ class BDFalsa:
         return fila
 
     # Misma lógica que el SQL de db.latido_* / db.cierre_*.
+    def _viva(self, ultima_actividad):
+        # v15: COALESCE(FinalSesion, CreadoEn/Fecha) >= ahora - 10 min (límite inclusivo).
+        return ultima_actividad >= self.ahora - timedelta(minutes=10)
+
     def _sesion_agente_abierta(self, token):
         s = self.sesiones_agente.get(token)
         if not s or s["CreadoEn"] < self.ahora - timedelta(hours=12) or s["CierreExplicito"]:
+            return None
+        if not self._viva(s["FinalSesion"] or s["CreadoEn"]):
             return None
         return s
 
@@ -265,6 +271,7 @@ class BDFalsa:
         if s["FinalSesion"] is not None and s["FinalSesion"] >= self.ahora - timedelta(seconds=60):
             return False
         s["FinalSesion"] = self.ahora
+        s["ExpiraEn"] = max(s["ExpiraEn"], self.ahora + timedelta(minutes=30))  # renueva, nunca acorta
         return True
 
     def cierre_mirastock(self, token):
@@ -313,7 +320,8 @@ class BDFalsa:
         """Fila OK de Energía con esa llave, de las últimas 12 h y abierta (como el WHERE del SQL)."""
         for f in self.accesos:
             if (f.get("Token") == llave and f["Portal"] == "Energía" and f["Resultado"] == "OK"
-                    and f["Fecha"] >= self.ahora - timedelta(hours=12) and not f["CierreExplicito"]):
+                    and f["Fecha"] >= self.ahora - timedelta(hours=12) and not f["CierreExplicito"]
+                    and self._viva(f["FinalSesion"] or f["Fecha"])):
                 return f
         return None
 
