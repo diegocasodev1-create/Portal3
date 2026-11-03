@@ -901,13 +901,47 @@ def _iso_utc(fecha: datetime | None) -> str | None:
     return fecha.strftime("%Y-%m-%dT%H:%M:%SZ") if fecha else None
 
 
+def _es_denegado(fila: dict) -> bool:
+    # Un acceso denegado no fue una sesión: Cierre, Tiempo y Final quedan vacíos.
+    return fila["Resultado"] == "Denegado"
+
+
 def _texto_cierre(fila: dict) -> str:
-    """Cómo terminó la sesión (mismos textos que la tabla de /historial; vacío si no hubo latidos)."""
+    """Cómo terminó la sesión, con los mismos textos que la tabla (vacío = «—» en pantalla).
+
+    Prioridad: Botón → En curso → Inactividad → Sin actividad → No medida.
+    """
+    if _es_denegado(fila):
+        return ""
     if fila["CierreExplicito"]:
         return "Botón"
     if fila["EnCurso"]:
         return "En curso"
-    return "Inactividad" if fila["FinalSesion"] else ""
+    if fila["FinalSesion"]:
+        return "Inactividad"
+    if fila.get("SinActividad"):
+        return "Sin actividad"
+    if not fila.get("Medible"):
+        return "No medida"
+    return ""
+
+
+def _final_sesion(fila: dict) -> datetime | None:
+    """Final de sesión a mostrar: sin actividad = la hora de ingreso; no medida o denegado = ninguno."""
+    if _es_denegado(fila):
+        return None
+    if fila["FinalSesion"]:
+        return fila["FinalSesion"]
+    return fila["Fecha"] if fila.get("SinActividad") else None
+
+
+def _tiempo_csv(fila: dict) -> str:
+    """Minutos de la sesión: 0 si no hubo actividad; vacío si no se midió o fue denegado."""
+    if _es_denegado(fila):
+        return ""
+    if fila.get("SinActividad"):
+        return "0"
+    return _minutos_csv(fila["TiempoSesionSeg"])
 
 
 def _zona_csv(tz_offset_min: int) -> str:
@@ -1004,8 +1038,8 @@ def api_historial_csv(
         [
             _fecha_csv(f["Fecha"], tz_offset_min),
             *(_celda_csv(f[c] or "") for c in ("Usuario", "Correo", "Portal", "Resultado")),
-            _fecha_csv(f["FinalSesion"], tz_offset_min),
-            _minutos_csv(f["TiempoSesionSeg"]),
+            _fecha_csv(_final_sesion(f), tz_offset_min),
+            _tiempo_csv(f),
             _texto_cierre(f),
         ]
         for f in filas
@@ -1052,10 +1086,11 @@ def _estadistica_json(datos: dict) -> dict:
 
 
 def _celdas_sesiones(datos: dict, tz_offset_min: int) -> list[str]:
-    """Sesiones · Sesiones medidas · Horas totales · Minutos totales · Promedio por sesión · Última conexión."""
+    """Sesiones · Sesiones medidas · Sin actividad · Horas totales · Minutos totales · Promedio · Última conexión."""
     return [
         str(datos["sesiones"]),
         str(datos["sesionesMedidas"]),
+        str(datos["sinActividad"]),
         _duracion_texto(datos["segundosTotales"]),
         _minutos_csv(datos["segundosTotales"]),
         _duracion_texto(datos["promedioSeg"]),
@@ -1065,7 +1100,7 @@ def _celdas_sesiones(datos: dict, tz_offset_min: int) -> list[str]:
 
 def _encabezados_sesiones(tz_offset_min: int) -> list[str]:
     return [
-        "Sesiones", "Sesiones medidas", "Horas totales", "Minutos totales", "Promedio por sesión",
+        "Sesiones", "Sesiones medidas", "Sin actividad", "Horas totales", "Minutos totales", "Promedio por sesión",
         f"Última conexión ({_zona_csv(tz_offset_min)})",
     ]
 

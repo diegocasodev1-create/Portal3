@@ -151,6 +151,8 @@ app**: los administra el usuario.
 | `TiempoSesionSeg` | `FinalSesion − Fecha` en segundos; NULL sin latidos |
 | `EnCurso` | `BIT`: 1 si el último latido tiene menos de 5 minutos (0 si la sesión se cerró con botón) |
 | `CierreExplicito` | `BIT`: 1 si la sesión se cerró con «Atrás» o «Cerrar sesión» |
+| `Medible` | `BIT` (v14): 1 si la sesión podía medirse (Energía: tiene llave; MiraStock: creada desde el primer latido registrado). NULL cuenta como 0 |
+| `SinActividad` | `BIT` (v14): 1 si era medible, nunca llegó un latido y pasaron más de 5 min. En ese caso `TiempoSesionSeg = 0`; en los primeros 5 min `EnCurso = 1` |
 
 **Filtros** (todos opcionales, los mismos en los tres endpoints):
 
@@ -167,13 +169,20 @@ Un valor inválido responde **422** `{"detail", "errores": {campo: mensaje}}` co
 fechas de la respuesta vienen en ISO 8601 UTC con `Z` (`2026-10-28T14:05:00Z`).
 
 Cada fila de `/api/historial` trae además `FinalSesion` (ISO UTC o `null`), `TiempoSesionSeg` (entero o `null`),
-`EnCurso` (bool) y `CierreExplicito` (bool). El resumen agrega `tiempoPromedioSeg` (promedio de las filas con tiempo; `null` si no hay
+`EnCurso` (bool), `CierreExplicito` (bool) y, desde la v14, `Medible` y `SinActividad` (bool). El resumen agrega `tiempoPromedioSeg` (promedio de las filas con tiempo; `null` si no hay
 ninguna), `tiempoTotalSeg: {"Energía", "MiraStock"}` (suma en segundos de las filas con tiempo) `enCurso`
 (cantidad de filas con `EnCurso = 1`) y `cerradasBoton` (cantidad de filas con `CierreExplicito = 1`).
 
-La tabla de `/historial` muestra «Final de sesión» (hora local `dd/mm/aaaa hh:mm`, la etiqueta «En curso» o «—») y
-«Tiempo de sesión» («< 1 min», «44 min», «1 h 05 min» o «—»; los minutos se truncan) y «Cierre»: «Botón» si
-`CierreExplicito = 1`, «En curso» si `EnCurso = 1`, «Inactividad» si hay `FinalSesion`, y «—» si no hubo latidos.
+La tabla de `/historial` (y la pestaña «Usuarios (detallado)» de `/estadisticas`) muestra, con los mismos textos que
+el CSV (`comun.js` `textoCierre`/`textoTiempo`/`textoFinal` y `main._texto_cierre`/`_tiempo_csv`/`_final_sesion`):
+
+- **Cierre**, en este orden: «Botón» si `CierreExplicito = 1` → «En curso» si `EnCurso = 1` → «Inactividad» si hay
+  `FinalSesion` → «Sin actividad» si `SinActividad = 1` → «No medida» si `Medible = 0` → «—».
+- **Tiempo de sesión:** «0 min» si `SinActividad = 1`; si no, «< 1 min», «44 min», «1 h 05 min» (truncado) o «—»
+  (sin medir).
+- **Final de sesión:** hora local `dd/mm/aaaa hh:mm`, la etiqueta «En curso», la **hora de ingreso** si
+  `SinActividad = 1`, o «—» (no medida).
+- Las filas **Denegado** muestran «—» en las tres (no fueron sesiones).
 
 La página `/historial` convierte los días locales del navegador a UTC: «Desde» es ese día a las 00:00 locales y
 «Hasta» es el **día siguiente** a las 00:00 locales (así incluye el día completo). Envía
@@ -182,8 +191,8 @@ cambio de horario, la agrupación por día usa un solo desfase (puede correrse 1
 
 **CSV** («Exportar a Excel»): UTF-8 con BOM, separador `;`, fin de línea CRLF. Columnas `Fecha (<zona>)`
 (`AAAA-MM-DD hh:mm:ss`), Usuario, Correo, Portal, Resultado, `Final de sesión (<zona>)` (`AAAA-MM-DD hh:mm:ss`) y
-`Tiempo de sesión (min)` (minutos enteros truncados; vacío sin latidos) y `Cierre` (los mismos textos que la tabla,
-vacío en lugar de «—»). Desde la v11 las fechas van en hora local según `tz_offset_min` (la interfaz lo envía) y el
+`Tiempo de sesión (min)` (minutos enteros truncados; `0` sin actividad; vacío si no se midió) y `Cierre` (los
+mismos textos que la tabla; en las tres columnas, vacío en lugar de «—»). Desde la v11 las fechas van en hora local según `tz_offset_min` (la interfaz lo envía) y el
 encabezado lo indica: `Fecha (hora local, UTC-03:00)`; con `tz_offset_min=0` u omitido queda `Fecha (UTC)`.
 Una celda que empieza con `=`, `+`, `-`, `@`, tabulador
 o retorno de carro lleva una `'` adelante (para que Excel no la ejecute como fórmula). El archivo se llama
@@ -200,10 +209,12 @@ y tres niveles en acordeón (`<details>`):
    Usuarios únicos · Sesiones · Horas totales · Promedio por sesión · Última conexión.
    - Horas totales = suma de `TiempoSesionSeg`; el promedio considera solo las sesiones con tiempo medido. Si hay
      sesiones sin latidos, la celda agrega «medidas: N de M».
+   - v14: si hay sesiones sin actividad, la celda agrega también «sin actividad: K». Esas sesiones valen 0 s, así
+     que cuentan como medidas y bajan el promedio.
    - En el total, los usuarios únicos se cuentan **sin repetir entre portales** (`GROUPING SETS`); sesiones y horas suman.
    - Aparecen todos los portales de la vista (`SELECT DISTINCT Portal`), aunque no tengan sesiones en el rango.
 2. **Un bloque por portal**, generado desde la respuesta anterior (sin código por portal), con pestañas:
-   - **Usuarios (general):** Usuario · Correo · Sesiones · Horas totales · Promedio · Última conexión, de más a
+   - **Usuarios (general):** Usuario · Correo · Sesiones · Sin actividad (v14) · Horas totales · Promedio · Última conexión, de más a
      menos horas (luego más sesiones, luego correo).
      - v13: buscador «Correo» (contiene, sin distinguir mayúsculas) con «Buscar» o Enter, igual que en
        «detallado». Contador «7 usuarios» o «2 de 7 usuarios»; sin coincidencias, «Sin usuarios que coincidan con
@@ -219,7 +230,8 @@ Respuestas (fechas ISO UTC con `Z`; segundos enteros o `null` si no hay tiempo m
 ```json
 GET /api/estadisticas/portales
 {"portales": [{"portal": "Energía", "usuariosUnicos": 6, "sesiones": 29, "segundosTotales": 3589,
-               "promedioSeg": 897, "sesionesMedidas": 4, "ultimaConexion": "2026-10-29T22:39:40Z"}, ...],
+               "promedioSeg": 897, "sesionesMedidas": 4, "ultimaConexion": "2026-10-29T22:39:40Z",
+               "sinActividad": 0}, ...],
  "total": {"usuariosUnicos": 10, "sesiones": 48, ...}}
 
 GET /api/estadisticas/usuarios?portal=Energía
@@ -236,7 +248,7 @@ el mismo límite de 256 caracteres. `totalSinFiltro` = usuarios distintos del po
 correo (sin filtro ni truncado es igual a `total` y no hace otra consulta). `/portales` no acepta `correo`.
 
 **CSV de estadísticas:** mismo formato que el del historial. Columnas: Portal (o Usuario y Correo) · Usuarios
-únicos (solo portales) · Sesiones · Sesiones medidas · Horas totales (texto «52 h 10 min») · Minutos totales
+únicos (solo portales) · Sesiones · Sesiones medidas · Sin actividad (v14) · Horas totales (texto «52 h 10 min») · Minutos totales
 (número entero) · Promedio por sesión (texto) · `Última conexión (hora local, UTC-03:00)`. Archivos
 `estadisticas_portales_AAAAMMDD.csv` y `estadisticas_<portal>_usuarios_AAAAMMDD.csv` (`<portal>` en minúsculas sin
 tildes, p. ej. `energia`). Más de 5.000 usuarios → `X-Historial-Truncado: 5000`.

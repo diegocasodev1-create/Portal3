@@ -232,11 +232,33 @@ window.Mira = (() => {
     return `${numero.format(Math.floor(minutos / 60))} h ${dos(minutos % 60)} min`;
   }
 
+  // Un acceso denegado no fue una sesión: Cierre, Tiempo y Final muestran «—».
+  const esDenegado = (a) => a.Resultado === "Denegado";
+
   // Cómo terminó la sesión (los mismos textos que la columna «Cierre» del CSV).
+  // Prioridad: Botón → En curso → Inactividad → Sin actividad → No medida.
   function textoCierre(a) {
+    if (esDenegado(a)) return "—";
     if (a.CierreExplicito) return "Botón";
     if (a.EnCurso) return "En curso";
-    return a.FinalSesion ? "Inactividad" : "—";
+    if (a.FinalSesion) return "Inactividad";
+    if (a.SinActividad) return "Sin actividad";
+    if (!a.Medible) return "No medida";
+    return "—";
+  }
+
+  // Tiempo de sesión: «0 min» si no hubo actividad; «—» si no se midió o fue denegado.
+  function textoTiempo(a) {
+    if (esDenegado(a)) return "—";
+    if (a.SinActividad) return "0 min";
+    return duracion(a.TiempoSesionSeg);
+  }
+
+  // Final de sesión (sin el chip «En curso», que pone cada tabla): sin actividad = la hora de ingreso.
+  function textoFinal(a) {
+    if (esDenegado(a)) return "—";
+    if (a.FinalSesion) return fechaLocal(a.FinalSesion);
+    return a.SinActividad ? fechaLocal(a.Fecha) : "—";
   }
 
   // -------------------------------------------------------------------------
@@ -389,6 +411,6 @@ window.Mira = (() => {
   return {
     $, el, api, solicitar, setOcupado, toast, ErrorApi, abrirModal, cerrarModal, sesion, errorContrasena, marcarReglas,
     prepararOjos, ocultarClaves,
-    numero, dos, textoDia, inicioDiaLocal, agregarRango, tzOffsetMin, fechaLocal, duracion, textoCierre, descargarCsv,
+    numero, dos, textoDia, inicioDiaLocal, agregarRango, tzOffsetMin, fechaLocal, duracion, textoCierre, textoTiempo, textoFinal, descargarCsv,
   };
 })();

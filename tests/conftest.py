@@ -223,11 +223,14 @@ class BDFalsa:
         self.usuarios[uid]["InvitacionEnviada"] = True
 
     def agregar_acceso(self, fecha, correo, portal="Energía", resultado="OK", usuario="",
-                       final_sesion=None, en_curso=False, cierre=False):
+                       final_sesion=None, en_curso=False, cierre=False, medible=True, sin_actividad=False):
         tiempo = int((final_sesion - fecha).total_seconds()) if final_sesion and fecha else None
+        if sin_actividad:
+            tiempo = 0  # como la vista (v14): sin actividad vale 0 s
         self.historial.append({
             "Fecha": fecha, "Usuario": usuario, "Correo": correo, "Portal": portal, "Resultado": resultado,
             "FinalSesion": final_sesion, "TiempoSesionSeg": tiempo, "EnCurso": en_curso, "CierreExplicito": cierre,
+            "Medible": medible, "SinActividad": sin_actividad,
         })
 
     def agregar_sesion_agente(self, token, creado_en, final_sesion=None, expira_en=None, cierre=False):
@@ -389,6 +392,7 @@ class BDFalsa:
             "promedioSeg": sum(tiempos) // len(tiempos) if tiempos else None,
             "sesionesMedidas": len(tiempos),
             "ultimaConexion": max((r["Fecha"] for r in filas), default=None),
+            "sinActividad": sum(bool(r["SinActividad"]) for r in filas),
         }
 
     def estadisticas_portales(self, desde, hasta):

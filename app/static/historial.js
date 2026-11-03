@@ -4,7 +4,7 @@
 (() => {
   const {
     $, el, api, setOcupado, toast,
-    numero, textoDia, inicioDiaLocal, agregarRango, tzOffsetMin, fechaLocal, duracion, textoCierre, descargarCsv,
+    numero, textoDia, inicioDiaLocal, agregarRango, tzOffsetMin, fechaLocal, duracion, textoCierre, textoTiempo, textoFinal, descargarCsv,
   } = window.Mira;
 
   const DIAS_POR_DEFECTO = 7;
@@ -190,8 +190,8 @@
         el("span", { class: `chip ${ok ? "chip-ok" : "chip-denegado"}`, text: a.Resultado })),
       a.EnCurso
         ? el("td", { "data-label": "Final de sesión" }, el("span", { class: "chip chip-en-curso", text: "En curso" }))
-        : el("td", { "data-label": "Final de sesión", text: fechaLocal(a.FinalSesion) }),
-      el("td", { class: "td-tiempo", "data-label": "Tiempo de sesión", text: duracion(a.TiempoSesionSeg) }),
+        : el("td", { "data-label": "Final de sesión", text: textoFinal(a) }),
+      el("td", { class: "td-tiempo", "data-label": "Tiempo de sesión", text: textoTiempo(a) }),
       el("td", { "data-label": "Cierre", text: textoCierre(a) }),
     ]);
   }

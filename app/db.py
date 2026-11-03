@@ -497,7 +497,9 @@ def listar_historial(
         cur.execute(
             "SELECT Fecha, ISNULL(Usuario, '') AS Usuario, Correo, Portal, Resultado,"
             " FinalSesion, TiempoSesionSeg, ISNULL(EnCurso, 0) AS EnCurso,"
-            " ISNULL(CierreExplicito, 0) AS CierreExplicito"
+            " ISNULL(CierreExplicito, 0) AS CierreExplicito,"
+            # v14: Medible NULL cuenta como 0, igual que los demás bits.
+            " ISNULL(Medible, 0) AS Medible, ISNULL(SinActividad, 0) AS SinActividad"
             f" FROM core.vHistorialAccesos{where}"
             " ORDER BY Fecha DESC, Correo"
             " OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
@@ -507,7 +509,7 @@ def listar_historial(
             {
                 "Fecha": r[0], "Usuario": (r[1] or "").strip(), "Correo": r[2], "Portal": r[3], "Resultado": r[4],
                 "FinalSesion": r[5], "TiempoSesionSeg": r[6], "EnCurso": bool(r[7]),
-                "CierreExplicito": bool(r[8]),
+                "CierreExplicito": bool(r[8]), "Medible": bool(r[9]), "SinActividad": bool(r[10]),
             }
             for r in cur.fetchall()
         ]
@@ -565,10 +567,12 @@ def _texto_dia(valor: Any) -> str:
 # Estadísticas (solo lectura sobre core.vHistorialAccesos; una sesión = una fila con Resultado = 'OK')
 # ---------------------------------------------------------------------------
 
-# Sesiones, segundos totales, promedio (AVG ignora los NULL: solo sesiones medidas), sesiones medidas y última.
+# Sesiones, segundos totales, promedio (AVG ignora los NULL: solo sesiones medidas), sesiones medidas, última
+# y sesiones sin actividad (v14; la vista ya les pone TiempoSesionSeg = 0, así que suman y promedian como 0).
 _AGREGADOS_SESIONES = (
     "COUNT(*), SUM(CAST(TiempoSesionSeg AS BIGINT)), AVG(CAST(TiempoSesionSeg AS BIGINT)),"
-    " COUNT(TiempoSesionSeg), MAX(Fecha)"
+    " COUNT(TiempoSesionSeg), MAX(Fecha),"
+    " ISNULL(SUM(CASE WHEN SinActividad = 1 THEN 1 ELSE 0 END), 0)"
 )
 
 
@@ -580,18 +584,21 @@ def _where_sesiones(
     )
 
 
-def _agregados(sesiones: int, segundos: Any, promedio: Any, medidas: int, ultima: Any) -> dict[str, Any]:
+def _agregados(
+    sesiones: int, segundos: Any, promedio: Any, medidas: int, ultima: Any, sin_actividad: Any
+) -> dict[str, Any]:
     return {
         "sesiones": sesiones,
         "segundosTotales": int(segundos) if segundos is not None else None,
         "promedioSeg": int(promedio) if promedio is not None else None,
         "sesionesMedidas": medidas,
         "ultimaConexion": ultima,
+        "sinActividad": int(sin_actividad or 0),
     }
 
 
 def _sin_sesiones() -> dict[str, Any]:
-    return _agregados(0, None, None, 0, None)
+    return _agregados(0, None, None, 0, None, 0)
 
 
 def estadisticas_portales(desde: datetime | None, hasta: datetime | None) -> dict[str, Any]:

@@ -22,9 +22,9 @@ def revocar_admin(bd):
 PAGINAS = {
     "/": ("Portal de administración", 'href="/estadisticas"'),
     "/contactos": ("Centro Administración de contactos", 'id="tabla-cuerpo"'),
-    "/historial": ("Logs control de ingresos", '<script src="/static/historial.js?v=14"'),
-    "/estadisticas": ("Estadísticas del Portal Corporativo MiraGroup", '<script src="/static/estadisticas.js?v=14"'),
-    "/administradores": ("Centro de administración principal", '<script src="/static/administradores.js?v=14"'),
+    "/historial": ("Logs control de ingresos", '<script src="/static/historial.js?v=15"'),
+    "/estadisticas": ("Estadísticas del Portal Corporativo MiraGroup", '<script src="/static/estadisticas.js?v=15"'),
+    "/administradores": ("Centro de administración principal", '<script src="/static/administradores.js?v=15"'),
 }
 
 
@@ -133,10 +133,10 @@ def test_listado_ordenado_y_fechas_iso_z(cliente_admin, bd):
     assert datos["filas"] == [
         {"Fecha": "2026-10-21T09:05:07Z", "Usuario": "", "Correo": "b@ejemplo.com",
          "Portal": "MiraStock", "Resultado": "Denegado", "FinalSesion": None, "TiempoSesionSeg": None, "EnCurso": False,
-         "CierreExplicito": False},
+         "CierreExplicito": False, "Medible": True, "SinActividad": False},
         {"Fecha": "2026-10-20T08:00:00Z", "Usuario": "Ana Pérez", "Correo": "a@ejemplo.com",
          "Portal": "Energía", "Resultado": "OK", "FinalSesion": None, "TiempoSesionSeg": None, "EnCurso": False,
-         "CierreExplicito": False},
+         "CierreExplicito": False, "Medible": True, "SinActividad": False},
     ]
 
 
@@ -164,7 +164,7 @@ def test_listado_columnas_de_sesion(cliente_admin, bd):
 def test_fila_con_fecha_o_correo_nulos_no_rompe(cliente_admin, bd, monkeypatch):
     fila = {"Fecha": None, "Usuario": "", "Correo": None, "Portal": "MiraStock", "Resultado": "OK",
             "FinalSesion": None, "TiempoSesionSeg": None, "EnCurso": False,
-         "CierreExplicito": False}
+         "CierreExplicito": False, "Medible": True, "SinActividad": False}
     monkeypatch.setattr(db, "listar_historial", lambda *args: ([dict(fila)], 1))
     datos = cliente_admin.get("/api/historial").json()
     assert datos["filas"] == [fila]
@@ -473,18 +473,19 @@ def cursor_falso(monkeypatch):
 
 def test_db_listar_historial_offset_y_usuario_nulo(cursor_falso):
     cursor_falso["cursor"] = cur = CursorFalso(
-        uno=[(51,)], todos=[[(FECHA, None, "a@ejemplo.com", "Energía", "OK", FECHA + timedelta(minutes=5), 300, 1, 0)]]
+        uno=[(51,)], todos=[[(FECHA, None, "a@ejemplo.com", "Energía", "OK", FECHA + timedelta(minutes=5), 300, 1, 0, 1, 0)]]
     )
     filas, total = db.listar_historial(db.FiltrosHistorial(portal="Energía"), 2, 50)
     assert total == 51
     assert filas == [{
         "Fecha": FECHA, "Usuario": "", "Correo": "a@ejemplo.com", "Portal": "Energía", "Resultado": "OK",
         "FinalSesion": FECHA + timedelta(minutes=5), "TiempoSesionSeg": 300, "EnCurso": True,
-        "CierreExplicito": False,
+        "CierreExplicito": False, "Medible": True, "SinActividad": False,
     }]
     (sql_total, p_total), (sql_filas, p_filas) = cur.ejecutados
     assert "FinalSesion, TiempoSesionSeg, ISNULL(EnCurso, 0) AS EnCurso" in sql_filas
-    assert "ISNULL(CierreExplicito, 0) AS CierreExplicito" in sql_filas
+    assert "ISNULL(CierreExplicito, 0) AS CierreExplicito," in sql_filas
+    assert "ISNULL(Medible, 0) AS Medible, ISNULL(SinActividad, 0) AS SinActividad FROM" in sql_filas
     assert "core.vHistorialAccesos WHERE Portal = ?" in sql_total and p_total == ("Energía",)
     assert "ORDER BY Fecha DESC" in sql_filas and "OFFSET ? ROWS FETCH NEXT ? ROWS ONLY" in sql_filas
     assert p_filas == ("Energía", 50, 50)
@@ -519,8 +520,8 @@ def test_db_resumen_sin_latidos_promedio_nulo(cursor_falso):
 @pytest.mark.parametrize("ruta", PAGINAS)
 def test_paginas_con_cache_busting_v13(cliente_admin, ruta):
     texto = cliente_admin.get(ruta).text
-    assert 'href="/static/styles.css?v=14"' in texto
-    assert '.js"' not in texto and "?v=13" not in texto  # todo archivo local lleva ?v=14
+    assert 'href="/static/styles.css?v=15"' in texto
+    assert '.js"' not in texto and "?v=14" not in texto  # todo archivo local lleva ?v=15
 
 
 def test_historial_columnas_e_indicadores_de_sesion(cliente_admin):

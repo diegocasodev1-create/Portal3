@@ -8,7 +8,7 @@
 (() => {
   const {
     $, el, api, setOcupado, toast,
-    numero, textoDia, agregarRango, tzOffsetMin, fechaLocal, duracion, textoCierre, descargarCsv,
+    numero, textoDia, agregarRango, tzOffsetMin, fechaLocal, duracion, textoCierre, textoTiempo, textoFinal, descargarCsv,
   } = window.Mira;
 
   const DIAS_POR_DEFECTO = 30;
@@ -140,25 +140,44 @@
     return { nodos: [carga, vacio, error, tabla], cuerpo, pie, mostrar };
   }
 
-  const COLUMNAS_SESIONES = [
-    { titulo: "Sesiones", clase: "td-num" },
-    { titulo: "Horas totales", clase: "td-num" },
-    { titulo: "Promedio por sesión", clase: "td-num" },
-    { titulo: "Última conexión" },
-  ];
+  const COLUMNA_SIN_ACTIVIDAD = { titulo: "Sin actividad", clase: "td-num" };
 
-  // Sesiones · Horas totales (con «medidas: N de M» si hay sesiones sin tiempo) · Promedio · Última conexión.
-  function celdasSesiones(d) {
+  // `conSinActividad`: con la columna «Sin actividad» después de «Sesiones» (tabla de usuarios).
+  function columnasSesiones(conSinActividad) {
+    return [
+      { titulo: "Sesiones", clase: "td-num" },
+      ...(conSinActividad ? [COLUMNA_SIN_ACTIVIDAD] : []),
+      { titulo: "Horas totales", clase: "td-num" },
+      { titulo: "Promedio por sesión", clase: "td-num" },
+      { titulo: "Última conexión" },
+    ];
+  }
+
+  function ayuda(texto, title) {
+    return el("span", { class: "ayuda-medidas", title, text: texto });
+  }
+
+  // Sesiones · [Sin actividad] · Horas totales · Promedio · Última conexión. Bajo las horas va «medidas: N de M»
+  // si hay sesiones sin tiempo y, sin la columna, «sin actividad: K» si hay sesiones que nunca enviaron un latido.
+  function celdasSesiones(d, conSinActividad) {
     const horas = el("td", { class: "td-num", "data-label": "Horas totales", text: duracion(d.segundosTotales) });
     if (d.sesiones > 0 && d.sesionesMedidas < d.sesiones) {
-      horas.append(el("span", {
-        class: "ayuda-medidas",
-        title: "Sesiones con tiempo medido. Las demás no tienen latidos y no suman horas.",
-        text: `medidas: ${numero.format(d.sesionesMedidas)} de ${numero.format(d.sesiones)}`,
-      }));
+      horas.append(ayuda(
+        `medidas: ${numero.format(d.sesionesMedidas)} de ${numero.format(d.sesiones)}`,
+        "Sesiones con tiempo medido. Las demás no tienen latidos y no suman horas.",
+      ));
+    }
+    if (!conSinActividad && d.sinActividad > 0) {
+      horas.append(ayuda(
+        `sin actividad: ${numero.format(d.sinActividad)}`,
+        "Sesiones medibles que nunca enviaron un latido (cuentan 0 min).",
+      ));
     }
     return [
       el("td", { class: "td-num", "data-label": "Sesiones", text: numero.format(d.sesiones) }),
+      ...(conSinActividad
+        ? [el("td", { class: "td-num", "data-label": "Sin actividad", text: numero.format(d.sinActividad) })]
+        : []),
       horas,
       el("td", { class: "td-num", "data-label": "Promedio por sesión", text: duracion(d.promedioSeg) }),
       el("td", { "data-label": "Última conexión", text: fechaLocal(d.ultimaConexion) }),
@@ -187,7 +206,7 @@
   (() => {
     const exportar = el("button", { type: "button", class: "btn btn-secundario btn-chico", text: "Exportar a Excel" });
     const tabla = crearTabla({
-      columnas: [{ titulo: "Portal" }, { titulo: "Usuarios únicos", clase: "td-num" }, ...COLUMNAS_SESIONES],
+      columnas: [{ titulo: "Portal" }, { titulo: "Usuarios únicos", clase: "td-num" }, ...columnasSesiones(false)],
       textoCarga: "Cargando estadísticas…",
       textoVacio: "Todavía no hay portales con accesos registrados.",
       reintentar: () => vista.cargar(),
@@ -211,7 +230,7 @@
       return el("tr", null, [
         el("td", { "data-label": "Portal", text: nombre }),
         el("td", { class: "td-num", "data-label": "Usuarios únicos", text: numero.format(d.usuariosUnicos) }),
-        ...celdasSesiones(d),
+        ...celdasSesiones(d, false),
       ]);
     }
 
@@ -267,7 +286,7 @@
     ]);
     const resumen = el("p", { class: "resumen", "aria-live": "polite" });
     const tabla = crearTabla({
-      columnas: [{ titulo: "Usuario" }, { titulo: "Correo" }, ...COLUMNAS_SESIONES],
+      columnas: [{ titulo: "Usuario" }, { titulo: "Correo" }, ...columnasSesiones(true)],
       textoCarga: "Cargando usuarios…",
       textoVacio: "No hay sesiones en el período seleccionado.",
       reintentar: () => vista.cargar(),
@@ -309,7 +328,7 @@
       tabla.cuerpo.replaceChildren(...r.filas.map((u) => el("tr", null, [
         el("td", { "data-label": "Usuario", text: u.usuario || "—" }),
         el("td", { class: "td-correo", "data-label": "Correo", text: u.correo || "—" }),
-        ...celdasSesiones(u),
+        ...celdasSesiones(u, true),
       ])));
       const conFiltro = Boolean(r.correo);
       if (!r.total) {
@@ -374,8 +393,8 @@
           el("span", { class: `chip ${ok ? "chip-ok" : "chip-denegado"}`, text: a.Resultado })),
         a.EnCurso
           ? el("td", { "data-label": "Final de sesión" }, el("span", { class: "chip chip-en-curso", text: "En curso" }))
-          : el("td", { "data-label": "Final de sesión", text: fechaLocal(a.FinalSesion) }),
-        el("td", { class: "td-tiempo", "data-label": "Tiempo de sesión", text: duracion(a.TiempoSesionSeg) }),
+          : el("td", { "data-label": "Final de sesión", text: textoFinal(a) }),
+        el("td", { class: "td-tiempo", "data-label": "Tiempo de sesión", text: textoTiempo(a) }),
         el("td", { "data-label": "Cierre", text: textoCierre(a) }),
       ]);
     }

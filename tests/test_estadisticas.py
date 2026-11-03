@@ -12,6 +12,7 @@ HOY = lambda: datetime.now(timezone.utc).strftime("%Y%m%d")  # noqa: E731
 
 SIN_SESIONES = {
     "sesiones": 0, "segundosTotales": None, "promedioSeg": None, "sesionesMedidas": 0, "ultimaConexion": None,
+    "sinActividad": 0,
 }
 
 
@@ -36,7 +37,7 @@ def test_pagina_estadisticas_estructura(cliente_admin):
     assert '<template id="tpl-portal">' in texto and 'role="tablist"' in texto
     assert 'id="e-desde"' in texto and 'id="e-hasta"' in texto
     assert 'href="/historial"' in texto
-    assert '<script src="/static/comun.js?v=14" defer></script>' in texto
+    assert '<script src="/static/comun.js?v=15" defer></script>' in texto
 
 
 def test_historial_enlaza_estadisticas(cliente_admin):
@@ -151,16 +152,18 @@ def test_portales_totales_y_total_corporativo(cliente_admin, bd):
         {
             "portal": "Energía", "usuariosUnicos": 2, "sesiones": 3, "segundosTotales": 5400,
             "promedioSeg": 2700, "sesionesMedidas": 2, "ultimaConexion": "2026-10-20T17:30:00Z",
+            "sinActividad": 0,
         },
         {
             "portal": "MiraStock", "usuariosUnicos": 1, "sesiones": 1, "segundosTotales": 600,
             "promedioSeg": 600, "sesionesMedidas": 1, "ultimaConexion": "2026-10-20T18:30:00Z",
+            "sinActividad": 0,
         },
     ]
     # Usuarios únicos sin repetir entre portales (ana está en los dos; carla solo fue denegada).
     assert datos["total"] == {
         "usuariosUnicos": 2, "sesiones": 4, "segundosTotales": 6000, "promedioSeg": 2000,
-        "sesionesMedidas": 3, "ultimaConexion": "2026-10-20T18:30:00Z",
+        "sesionesMedidas": 3, "ultimaConexion": "2026-10-20T18:30:00Z", "sinActividad": 0,
     }
 
 
@@ -215,6 +218,7 @@ def test_usuarios_orden_por_horas_y_campos(cliente_admin, bd):
     assert datos["filas"][0] == {
         "usuario": "Mucho Tiempo", "correo": "mucho@ejemplo.com", "sesiones": 2, "segundosTotales": 7200,
         "promedioSeg": 7200, "sesionesMedidas": 1, "ultimaConexion": "2026-10-21T15:30:00Z",
+        "sinActividad": 0,
     }
     assert datos["filas"][2]["usuario"] == "" and datos["filas"][2]["segundosTotales"] is None
     assert bd.llamadas_historial[-1] == ("usuarios", "Energía", None, None, main.TOPE_USUARIOS_ESTADISTICAS, None)
@@ -374,12 +378,12 @@ def test_csv_portales_formato_hora_local(cliente_admin, bd):
     assert resp.headers["content-disposition"] == f'attachment; filename="estadisticas_portales_{HOY()}.csv"'
     assert resp.content.startswith(b"\xef\xbb\xbf")
     assert lineas_csv(resp) == [
-        "Portal;Usuarios únicos;Sesiones;Sesiones medidas;Horas totales;Minutos totales;Promedio por sesión;"
+        "Portal;Usuarios únicos;Sesiones;Sesiones medidas;Sin actividad;Horas totales;Minutos totales;Promedio por sesión;"
         "Última conexión (hora local, UTC-03:00)",
         # 2026-10-20 02:15 UTC = 2026-10-19 23:15 en UTC-3
-        "Energía;2;2;1;52 h 10 min;3130;52 h 10 min;2026-10-19 23:15:07",
-        "MiraStock;1;1;1;44 min;44;44 min;2026-10-18 09:00:00",
-        "Total Portal Corporativo;2;3;2;52 h 54 min;3174;26 h 27 min;2026-10-19 23:15:07",
+        "Energía;2;2;1;0;52 h 10 min;3130;52 h 10 min;2026-10-19 23:15:07",
+        "MiraStock;1;1;1;0;44 min;44;44 min;2026-10-18 09:00:00",
+        "Total Portal Corporativo;2;3;2;0;52 h 54 min;3174;26 h 27 min;2026-10-19 23:15:07",
         "",
     ]
 
@@ -391,9 +395,9 @@ def test_csv_portales_utc_y_sin_tiempo_medido(cliente_admin, bd):
     lineas = lineas_csv(cliente_admin.get("/api/estadisticas/portales/csv", params=params))
     assert lineas[0].endswith(";Última conexión (UTC)")
     assert lineas[1:] == [
-        "Energía;0;0;0;;;;",
-        "MiraStock;1;1;0;;;;2026-10-20 15:30:00",
-        "Total Portal Corporativo;1;1;0;;;;2026-10-20 15:30:00",
+        "Energía;0;0;0;0;;;;",
+        "MiraStock;1;1;0;0;;;;2026-10-20 15:30:00",
+        "Total Portal Corporativo;1;1;0;0;;;;2026-10-20 15:30:00",
         "",
     ]
 
@@ -410,10 +414,10 @@ def test_csv_usuarios_formato(cliente_admin, bd):
     assert resp.headers["content-disposition"] == f'attachment; filename="estadisticas_energia_usuarios_{HOY()}.csv"'
     assert "x-historial-truncado" not in resp.headers
     assert lineas_csv(resp) == [
-        "Usuario;Correo;Sesiones;Sesiones medidas;Horas totales;Minutos totales;Promedio por sesión;"
+        "Usuario;Correo;Sesiones;Sesiones medidas;Sin actividad;Horas totales;Minutos totales;Promedio por sesión;"
         "Última conexión (hora local, UTC+05:30)",
-        "Ana Pérez;ana@ejemplo.com;1;1;1 h 30 min;90;1 h 30 min;2026-10-20 21:00:00",
-        "'@malo;'-x@ejemplo.com;1;1;< 1 min;0;< 1 min;2026-10-20 21:00:00",
+        "Ana Pérez;ana@ejemplo.com;1;1;0;1 h 30 min;90;1 h 30 min;2026-10-20 21:00:00",
+        "'@malo;'-x@ejemplo.com;1;1;0;< 1 min;0;< 1 min;2026-10-20 21:00:00",
         "",
     ]
 
@@ -472,10 +476,13 @@ def test_db_estadisticas_portales(cursor_falso):
     desde, hasta = datetime(2026, 10, 1), datetime(2026, 10, 31)
     cursor_falso["cursor"] = cur = CursorFalso(uno=[], todos=[
         [("MiraStock",), ("Energía",)],
-        [("Energía", 0, 2, 3, 6000, 2000, 3, FECHA), (None, 1, 2, 3, 6000, 2000, 3, FECHA)],
+        [("Energía", 0, 2, 3, 6000, 2000, 3, FECHA, 1), (None, 1, 2, 3, 6000, 2000, 3, FECHA, 1)],
     ])
     datos = db.estadisticas_portales(desde, hasta)
-    medidas = {"sesiones": 3, "segundosTotales": 6000, "promedioSeg": 2000, "sesionesMedidas": 3, "ultimaConexion": FECHA}
+    medidas = {
+        "sesiones": 3, "segundosTotales": 6000, "promedioSeg": 2000, "sesionesMedidas": 3, "ultimaConexion": FECHA,
+        "sinActividad": 1,
+    }
     assert datos == {
         "portales": [
             {"portal": "Energía", "usuariosUnicos": 2, **medidas},
@@ -500,15 +507,15 @@ def test_db_estadisticas_portales_sin_fila_total(cursor_falso):
 
 def test_db_estadisticas_usuarios(cursor_falso):
     cursor_falso["cursor"] = cur = CursorFalso(uno=[], todos=[[
-        ("a@ejemplo.com", " Ana ", 2, 600, 300, 2, FECHA),
-        ("b@ejemplo.com", None, 1, None, None, 0, FECHA),
-        ("c@ejemplo.com", "", 1, None, None, 0, FECHA),
+        ("a@ejemplo.com", " Ana ", 2, 600, 300, 2, FECHA, 1),
+        ("b@ejemplo.com", None, 1, None, None, 0, FECHA, 0),
+        ("c@ejemplo.com", "", 1, None, None, 0, FECHA, None),
     ]])
     filas, truncado = db.estadisticas_usuarios("Energía", None, datetime(2026, 11, 1), 2)
     assert truncado is True
     assert filas == [
         {"usuario": "Ana", "correo": "a@ejemplo.com", "sesiones": 2, "segundosTotales": 600, "promedioSeg": 300,
-         "sesionesMedidas": 2, "ultimaConexion": FECHA},
+         "sesionesMedidas": 2, "ultimaConexion": FECHA, "sinActividad": 1},
         {"usuario": "", "correo": "b@ejemplo.com", **SIN_SESIONES, "sesiones": 1, "ultimaConexion": FECHA},
     ]
     ((sql, params),) = cur.ejecutados
