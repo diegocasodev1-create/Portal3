@@ -8,9 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
 
-## Current status (as of 2026-11-03; v13 + v14 ready locally, NOT deployed)
+## Current status (as of 2026-11-03; v13 + v14 deployed that day)
 
-### v14 (2026-11-03): «Sin actividad» / «No medida» sessions — NOT DEPLOYED
+### v14 (2026-11-03): «Sin actividad» / «No medida» sessions — DEPLOYED
 - Asked for by the user. One image **v14** will carry v13 + v14 (the user's decision, 2026-11-03); v13 was never deployed on its own. One commit per version.
 - Done by the user (Claude must not touch it): `core.vHistorialAccesos` has two new last columns, `Medible` (BIT; Energía: has a key; MiraStock: created after the first recorded heartbeat) and `SinActividad` (BIT; medible, no heartbeat ever, > 5 min). The view already sets `TiempoSesionSeg = 0` when `SinActividad = 1` and `EnCurso = 1` during the first 5 min of a medible session with no heartbeat.
 - **711 tests pass** (new `tests/test_sin_actividad.py`). JS checked with esprima. Static `?v=15`.
@@ -21,14 +21,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - Final: FinalSesion; else Fecha (login time) if SinActividad; else «—» / empty. The «En curso» chip stays.
   - Denegado rows: «—» / empty in all three (user's decision). Existing data wins over `Medible = 0` (same order as Cierre).
 - `/estadisticas`: «sin actividad: K» help line under «medidas: N de M» in «General por portal» (only when K > 0); column «Sin actividad» after «Sesiones» in «Usuarios (general)»; CSV column «Sin actividad» after «Sesiones medidas» (portals, total row and users).
-- Pending: the user's local review of v13 + v14 together, then OK for build + deploy of image v14.
+- Deployed on 2026-11-03 (~06:21 UTC) as image `mira-admin-app:v14`, revision `--0000015` (v13 + v14 together; commits `41f3292` v13 and `fcc3958` v14). The same update removed `TOKEN_AUDIENCE` from the Container App (approved by the user).
+  - Checks: `/health` 200; `/login` 200 and serves `?v=15`; `/static/comun.js?v=15` 200; `/api/me` 401; startup clean. `--0000015` has 100% of the traffic; `--0000014` (v12) was deprovisioning.
+  - Not done by Claude in Azure: a real login or opening `/historial` / `/estadisticas` with data (needs the user's password; prod read).
+- The user reviewed v13 + v14 together locally and approved them on 2026-11-03 (including keeping existing data over `Medible = 0`).
 
-### v13 (2026-11-03): email search in «Usuarios (general)» of `/estadisticas` — NOT DEPLOYED
+### v13 (2026-11-03): email search in «Usuarios (general)» of `/estadisticas` — DEPLOYED (inside image v14)
 - Asked for by the user. Details under "Statistics" in Architecture.
 - **677 tests pass** (new search tests in `tests/test_estadisticas.py`, parametrized over Energía, MiraStock and a new portal). JS checked with esprima. Static `?v=14` (bumped from 13; the code image is still v13).
 - Backend: `/api/estadisticas/usuarios` and `/csv` take optional `correo` (same validation and `LIKE` escaping as `/api/historial`, via `_filtros_estadisticas_portal` → `_filtros_historial`). The JSON adds `correo` (applied value or null) and `totalSinFiltro` (`db.contar_usuarios_portal`, only called when there is a filter or truncation; otherwise `len(filas)`). `/api/estadisticas/portales` ignores `correo`. No DB, flow or Power Pages changes.
 - UI: same form as «Usuarios (detallado)» (form on top, counter below; user's decision 2026-11-03). Counter «7 usuarios» / «2 de 7 usuarios»; no match → «Sin usuarios que coincidan con la búsqueda» (and «0 de 7 usuarios»). The applied term (set on «Buscar»/Enter) is reused by date changes, «Reintentar» and the CSV export. Each tab keeps its own filter; the portal header meta stays unfiltered.
-- Goes out inside image v14 (see v14).
+- Went out inside image v14 (`--0000015`, 2026-11-03); see v14. There is no v13 image.
 
 ### v12 (2026-10-30): own admin login + «Centro de administración principal» + Cliente — DEPLOYED
 - Asked for by the user. Details under "Identity flow", "Admin center" and "Business rules" in Architecture.
@@ -51,7 +54,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - The user ran the gerencia UPDATE and the `sp_RestablecerContrasenaAdmin` ALTER, confirmed active admins, reviewed v12 locally (login, password change, admin center, eye button, Cliente) and approved it on 2026-10-30.
 - Deployed on 2026-10-30 (~22:28 UTC) as revision `--0000014`:
   - `session-secret` was rotated first (scratchpad script; the value was never printed), so all old sessions are invalid and Azure no longer shares the local secret.
-  - `AUTH_ENABLED` and `PORTAL_BASE_URL` were removed from the Container App (`PORTAL_BASE_URL` was equal to the code default). `TOKEN_AUDIENCE` is still set there but is ignored (`extra="ignore"`).
+  - `AUTH_ENABLED` and `PORTAL_BASE_URL` were removed from the Container App (`PORTAL_BASE_URL` was equal to the code default). `TOKEN_AUDIENCE` stayed set (ignored) until the v14 update removed it on 2026-11-03.
   - Checks: `/health` 200; `/login` 200; `/` → 303 `/login`; `/administradores` → 303 `/login?siguiente=/administradores`; `/api/me` and `/api/usuarios` 401; `POST /auth/portal` 404; `/api/latido` with an empty body 400; `/static/comun.js?v=13` 200; startup clean. `--0000014` has 100% of the traffic; `--0000013` (v11) was deprovisioning.
   - Not done by Claude in Azure: a real login (needs the user's password).
 
@@ -162,7 +165,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Next session: start here
 - **v12 deployed on 2026-10-30.** Ask the user whether login, password change and `/administradores` work in Azure (Claude did not log in there). Each admin with the default password must change it within 72 h.
 - **Session closed on 2026-10-30** after the v12 deploy; commits `13e114b` (v12 code), `77f756e` (docs) and this closing commit were pushed to `origin/main`.
-- **Next Azure update:** remove `TOKEN_AUDIENCE` from the Container App (`--remove-env-vars TOKEN_AUDIENCE`; the user approved it on 2026-10-30). The app ignores it since v12.
+- **v13 + v14 deployed on 2026-11-03** (image v14, `--0000015`). Ask the user whether the email search in «Usuarios (general)» and the «Sin actividad» / «No medida» texts look right in Azure with real data. `TOKEN_AUDIENCE` is gone from the Container App.
 - `cracion_usuario.txt` (repo root) is the user's local file with the `sp_CrearAdministrador` EXECs (no passwords, per the user). It is in `.gitignore`; Claude must not open, delete or commit it. `body.json` is still untracked and undecided.
 - **v11 follow-ups:**
   - With the user's OK (prod read), open `/estadisticas` in Azure and check that `/api/estadisticas/portales` and `/usuarios` answer 200 with the same totals as the local check.
@@ -177,7 +180,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Deployment
 - URL: https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io
 - Revision mode `Single`: traffic follows the latest revision, and no older one is kept for rollback.
-- **Running: image v12, revision `ca-mira-admin--0000014`, with own login (always on), `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~22:28 UTC on 2026-10-30. `/health` is OK and startup was clean. It has 100% of the traffic; `--0000013` (v11) was deprovisioning right after the deploy. `ENERGIA_PORTAL_URL`, `LATIDO_ORIGINS` and `PORTAL_BASE_URL` are not set in Azure, so the code defaults apply. The next image is **v14** (v13 + v14 code; static files at `?v=15`).
+- **Running: image v14 (v13 + v14 code), revision `ca-mira-admin--0000015`, with own login (always on), `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~06:21 UTC on 2026-11-03. `/health` is OK and startup was clean. It has 100% of the traffic; `--0000014` (v12) was deprovisioning right after the deploy. `ENERGIA_PORTAL_URL`, `LATIDO_ORIGINS`, `PORTAL_BASE_URL` and `TOKEN_AUDIENCE` are not set in Azure, so the code defaults apply. The next image is **v15** (bump static files to `?v=16` if they change).
 - Image history:
   - v3: auth off.
   - v4: External ID + PDF attachment.
@@ -189,6 +192,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - v10: Energía heartbeat/close by key `t` (`core.HistorialAccesos.Token`), no static changes (`--0000012`).
   - v11: `/estadisticas` + `/api/estadisticas/*`, generic portal filter, local-time CSVs, `?v=11` (`--0000013`).
   - v12: own admin login (`core.AdministradoresPortal`), `/administradores`, Cliente, password eye button, `?v=13` (`--0000014`).
+  - v13: email search in «Usuarios (general)» (`?v=14`; never built as its own image).
+  - v14: v13 + «Sin actividad» / «No medida», `sinActividad` counts, `?v=15`; `TOKEN_AUDIENCE` removed (`--0000015`).
 - **az CLI** is logged in to both tenants (`e3112796-…` workforce/subscription, `cb938793-…` External ID), and the active one can switch. Before az commands on Azure resources, run `az account set --subscription 38b3f030-c7b5-4d38-822b-c533f88cd34a`.
 - Logs older than the current replica (it scales to 0): Log Analytics workspace `d8a192a1-91f6-4add-882c-d1396d044ba0`, table `ContainerAppConsoleLogs_CL`, via `az monitor log-analytics query`. The app logs the user Id and the External ID account id, never the email.
 
@@ -373,7 +378,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - It swaps `app.db` and `mailer.enviar_bienvenida` for in-memory fakes and signs tokens with throwaway RSA keys.
   - The TestClient uses `https://testserver`. Cookies set manually need `domain="testserver.local"`.
 - JS syntax check: there is no Node on this machine. Use esprima from a scratch target dir: `pip install --target <dir> esprima==4.0.1`, then `esprima.parseScript(...)`.
-- Deploy a new version (always a new tag; v14 is next; bump `?v=` in the HTML, now `?v=15`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
+- Deploy a new version (always a new tag; v15 is next; bump `?v=` in the HTML, now `?v=15`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
 - Azure layout:
   - `ca-mira-admin` is in `RG-COPILOT-DEV`, East US, with 0.25 vCPU, 0.5 Gi and 0–1 replicas.
   - It reuses environment `managedEnvironment-rgscripth25prod-818f` and ACR `acrscripth25prod`, both in `rg-script-h25-prod`.
