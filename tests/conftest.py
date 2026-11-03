@@ -436,6 +436,64 @@ class BDFalsa:
         filas.sort(key=lambda f: (-(f["segundosTotales"] or 0), -f["sesiones"], f["correo"] or ""))
         return filas[:tope], len(filas) > tope
 
+    # v16: misma lógica que db.estadisticas_series / db.estadisticas_distribucion.
+    def estadisticas_series(self, portal, desde, hasta, tz_offset_min):
+        self.llamadas_historial.append(("series", portal, desde, hasta, tz_offset_min))
+        filas = [r for r in self._sesiones(portal, desde, hasta) if r["Fecha"] is not None]
+        conocidos = [portal] if portal else list({r["Portal"] for r in self.historial if r["Portal"] is not None})
+        grupos: dict = {}
+        for r in filas:
+            dia = (r["Fecha"] + timedelta(minutes=tz_offset_min)).date()
+            for clave in ((dia, r["Portal"]), (dia, None)):
+                grupos.setdefault(clave, []).append(r)
+        salida = [
+            {
+                "dia": dia, "portal": p, "sesiones": len(fs),
+                "segundos": sum(f["TiempoSesionSeg"] or 0 for f in fs),
+                "usuarios": len({f["Correo"] for f in fs if f["Correo"] is not None}),
+            }
+            for (dia, p), fs in grupos.items()
+        ]
+        salida.sort(key=lambda f: f["dia"])
+        return {"portales": sorted(set(conocidos), key=str.casefold), "filas": salida}
+
+    @staticmethod
+    def _tipo_cierre(r):
+        if r["CierreExplicito"]:
+            return "Botón"
+        if r["EnCurso"]:
+            return "En curso"
+        if r["FinalSesion"] is not None:
+            return "Inactividad"
+        if r["SinActividad"]:
+            return "Sin actividad"
+        if not r["Medible"]:
+            return "No medida"
+        return "Otro"
+
+    def estadisticas_distribucion(self, portal, desde, hasta, tz_offset_min):
+        self.llamadas_historial.append(("distribucion", portal, desde, hasta, tz_offset_min))
+        filas = self._sesiones(portal, desde, hasta)
+        cierres = dict.fromkeys(db.TIPOS_CIERRE, 0)
+        duracion = [0] * 5
+        sin_actividad = sin_medir = 0
+        calor = [[0] * 24 for _ in range(7)]
+        for r in filas:
+            cierres[self._tipo_cierre(r)] += 1
+            if r["SinActividad"]:
+                sin_actividad += 1
+            elif r["TiempoSesionSeg"] is None:
+                sin_medir += 1
+            else:
+                duracion[sum(r["TiempoSesionSeg"] >= b for b in db.BORDES_DURACION)] += 1
+            if r["Fecha"] is not None:
+                local = r["Fecha"] + timedelta(minutes=tz_offset_min)
+                calor[local.weekday()][local.hour] += 1  # weekday(): lunes = 0
+        return {
+            "cierres": cierres, "duracion": duracion, "sinActividad": sin_actividad, "sinMedir": sin_medir,
+            "calor": calor,
+        }
+
 
 @pytest.fixture(autouse=True)
 def iteraciones_rapidas(monkeypatch):
@@ -460,6 +518,7 @@ def bd(monkeypatch, iteraciones_rapidas):
         "crear_usuario", "actualizar_usuario", "eliminar_usuario", "marcar_invitacion_enviada",
         "listar_usuarios_con_acceso", "listar_historial", "resumen_historial",
         "estadisticas_portales", "estadisticas_usuarios", "contar_usuarios_portal",
+        "estadisticas_series", "estadisticas_distribucion",
         "latido_mirastock", "latido_energia", "cierre_mirastock", "cierre_energia",
         "latido_energia_llave", "cierre_energia_llave",
     ):

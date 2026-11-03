@@ -7,9 +7,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/styles.css?v=15">
-  <script src="/static/comun.js?v=15" defer></script>
-  <script src="/static/estadisticas.js?v=15" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=16">
+  <script src="/static/comun.js?v=16" defer></script>
+  <script src="/static/graficos.js?v=16" defer></script>
+  <script src="/static/estadisticas-inicio.js?v=16" defer></script>
 </head>
 <body>
   <a class="saltar" href="#contenido">Saltar al contenido</a>
@@ -29,45 +30,19 @@
   </header>
 
   <main id="contenido" class="contenido">
-    <form class="barra card" id="form-rango" aria-label="Período" novalidate>
-      <div class="campo">
-        <label for="e-desde">Desde</label>
-        <input type="date" id="e-desde" aria-describedby="e-fechas">
-      </div>
-      <div class="campo">
-        <label for="e-hasta">Hasta</label>
-        <input type="date" id="e-hasta" aria-describedby="e-fechas">
-      </div>
-      <div class="barra-acciones">
-        <button type="submit" class="btn btn-primario" id="btn-aplicar">Aplicar</button>
-        <a class="btn btn-fantasma" href="/historial">Historial completo</a>
-      </div>
-      <p class="error-campo error-fechas" id="e-fechas" role="alert"></p>
-    </form>
+    <div class="barra-estadisticas">
+      <p class="resumen-inicio">Resumen de los últimos 30 días. Entra a cada sección para ver sus gráficos y elegir otras fechas.</p>
+      <a class="btn btn-fantasma" href="/historial">Historial completo</a>
+    </div>
 
-    <!-- Nivel 1: totales por portal. Los bloques de cada portal (nivel 2) los arma estadisticas.js. -->
-    <details class="card bloque" id="bloque-general" open>
-      <summary class="bloque-titulo">
-        <h2>General por portal</h2>
-        <span class="bloque-meta" id="general-meta"></span>
-      </summary>
-      <div class="bloque-cuerpo" id="general-cuerpo"></div>
-    </details>
-
-    <div id="bloques-portales"></div>
-
-    <template id="tpl-portal">
-      <details class="card bloque bloque-portal">
-        <summary class="bloque-titulo">
-          <h2 class="bloque-nombre"></h2>
-          <span class="bloque-meta"></span>
-        </summary>
-        <div class="bloque-cuerpo">
-          <div class="pestanas" role="tablist"></div>
-          <div class="subvistas"></div>
-        </div>
-      </details>
-    </template>
+    <!-- Una card «General por portal» y una por cada portal de la vista (las arma estadisticas-inicio.js). -->
+    <h2 class="sr-only">Secciones</h2>
+    <div class="modulos modulos-estadisticas" id="cards-estadisticas" aria-busy="true">
+      <div class="estado estado-cards" id="cards-carga">
+        <span class="spinner" aria-hidden="true"></span>
+        <span>Cargando…</span>
+      </div>
+    </div>
   </main>
 
   <!-- Pantalla de sesión vencida -->

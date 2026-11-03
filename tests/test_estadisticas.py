@@ -31,13 +31,11 @@ def lineas_csv(resp):
 # ---------------------------------------------------------------------------
 
 def test_pagina_estadisticas_estructura(cliente_admin):
+    # v16: el inicio de estadísticas son cards (las arma estadisticas-inicio.js); sin acordeón.
     texto = cliente_admin.get("/estadisticas").text
-    assert '<details class="card bloque" id="bloque-general" open>' in texto
-    assert "<h2>General por portal</h2>" in texto
-    assert '<template id="tpl-portal">' in texto and 'role="tablist"' in texto
-    assert 'id="e-desde"' in texto and 'id="e-hasta"' in texto
-    assert 'href="/historial"' in texto
-    assert '<script src="/static/comun.js?v=15" defer></script>' in texto
+    assert 'id="cards-estadisticas"' in texto and "<details" not in texto
+    assert 'href="/historial"' in texto and 'href="/">← Inicio</a>' in texto
+    assert '<script src="/static/comun.js?v=16" defer></script>' in texto
 
 
 def test_historial_enlaza_estadisticas(cliente_admin):
@@ -150,12 +148,12 @@ def test_portales_totales_y_total_corporativo(cliente_admin, bd):
     datos = cliente_admin.get("/api/estadisticas/portales").json()
     assert datos["portales"] == [
         {
-            "portal": "Energía", "usuariosUnicos": 2, "sesiones": 3, "segundosTotales": 5400,
+            "portal": "Energía", "slug": "energia", "usuariosUnicos": 2, "sesiones": 3, "segundosTotales": 5400,
             "promedioSeg": 2700, "sesionesMedidas": 2, "ultimaConexion": "2026-10-20T17:30:00Z",
             "sinActividad": 0,
         },
         {
-            "portal": "MiraStock", "usuariosUnicos": 1, "sesiones": 1, "segundosTotales": 600,
+            "portal": "MiraStock", "slug": "mirastock", "usuariosUnicos": 1, "sesiones": 1, "segundosTotales": 600,
             "promedioSeg": 600, "sesionesMedidas": 1, "ultimaConexion": "2026-10-20T18:30:00Z",
             "sinActividad": 0,
         },
@@ -170,7 +168,7 @@ def test_portales_totales_y_total_corporativo(cliente_admin, bd):
 def test_portales_denegado_no_cuenta_como_sesion_ni_usuario(cliente_admin, bd):
     sesion(bd, "solo.denegado@ejemplo.com", "MiraStock", resultado="Denegado")
     datos = cliente_admin.get("/api/estadisticas/portales").json()
-    assert datos["portales"] == [{"portal": "MiraStock", "usuariosUnicos": 0, **SIN_SESIONES}]
+    assert datos["portales"] == [{"portal": "MiraStock", "slug": "mirastock", "usuariosUnicos": 0, **SIN_SESIONES}]
     assert datos["total"]["usuariosUnicos"] == 0
 
 
@@ -180,7 +178,7 @@ def test_portal_sin_sesiones_en_el_rango_aparece_con_ceros(cliente_admin, bd):
     params = {"desde": "2026-10-01T00:00:00Z", "hasta": "2026-11-01T00:00:00Z"}
     datos = cliente_admin.get("/api/estadisticas/portales", params=params).json()
     assert [p["portal"] for p in datos["portales"]] == ["Energía", "MiraStock"]
-    assert datos["portales"][0] == {"portal": "Energía", "usuariosUnicos": 0, **SIN_SESIONES}
+    assert datos["portales"][0] == {"portal": "Energía", "slug": "energia", "usuariosUnicos": 0, **SIN_SESIONES}
     assert datos["total"]["sesiones"] == 1
     assert bd.llamadas_historial[-1] == ("portales", datetime(2026, 10, 1), datetime(2026, 11, 1))
 

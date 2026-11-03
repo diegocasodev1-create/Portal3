@@ -319,26 +319,36 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
   padding: 14px 20px; border-top: 1px solid var(--borde-suave); color: var(--texto-2); font-size: 0.9rem;
 }
 
-/* ---------- Estadísticas: acordeón (details), pestañas y totales ---------- */
+/* ---------- Estadísticas: inicio con cards, vistas por sección, pestañas y totales ---------- */
 
-.bloque { margin-bottom: 16px; overflow: hidden; }
-.bloque-titulo {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
-  padding: 16px 20px; cursor: pointer; list-style: none;
+.barra-estadisticas {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
+  max-width: 1100px; margin: 0 auto 16px;
 }
-.bloque-titulo::-webkit-details-marker { display: none; }
-.bloque-titulo::before {
-  content: ""; flex: none; width: 9px; height: 9px; margin: 0 4px;
-  border-right: 2px solid var(--acento); border-bottom: 2px solid var(--acento);
-  transform: rotate(-45deg); transition: transform 0.15s;
+.resumen-inicio { margin: 0; color: var(--texto-2); font-size: 0.92rem; }
+.modulos-estadisticas { grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 1100px; margin-top: 0; }
+.estado-cards { grid-column: 1 / -1; }
+.card-estadistica { position: relative; overflow: hidden; padding-top: 32px; }
+.card-estadistica::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 5px;
+  background: var(--color-portal, var(--acento));
 }
-.bloque[open] > .bloque-titulo::before { transform: rotate(45deg); }
-.bloque[open] > .bloque-titulo { border-bottom: 1px solid var(--borde-suave); }
-.bloque-titulo:hover h2 { color: var(--acento-suave); }
-.bloque-titulo:focus-visible { outline: 2px solid var(--acento-suave); outline-offset: -4px; border-radius: var(--radio); }
-.bloque-meta { margin-left: auto; color: var(--texto-2); font-size: 0.88rem; font-variant-numeric: tabular-nums; }
-.bloque-cuerpo { padding-top: 4px; }
-@media (prefers-reduced-motion: reduce) { .bloque-titulo::before { transition: none; } }
+.card-estadistica:hover { border-color: var(--color-portal, var(--acento)); }
+.estadistica-resumen { font-size: 1.05rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.estadistica-usuarios { color: var(--texto-2); font-size: 0.88rem; font-variant-numeric: tabular-nums; }
+
+.seccion-estadisticas { margin-bottom: 16px; overflow: hidden; padding-bottom: 6px; }
+.enlace-portal { color: var(--acento-suave); font-weight: 600; text-decoration: none; }
+.enlace-portal:hover { text-decoration: underline; }
+.no-encontrado { max-width: 520px; margin: 6vh auto 0; text-align: center; }
+.no-encontrado h2 { margin-top: 0; }
+
+@media (max-width: 900px) {
+  .modulos-estadisticas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .modulos-estadisticas { grid-template-columns: minmax(0, 1fr); }
+}
 
 .subvista-barra {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
@@ -362,6 +372,52 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
 .td-num { text-align: right !important; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ayuda-medidas { display: block; font-size: 0.74rem; font-weight: 400; color: var(--texto-2); cursor: help; }
 .tabla tfoot td { font-weight: 700; border-top: 1px solid var(--borde); background: rgba(41, 184, 236, 0.06); }
+
+/* ---------- Estadísticas: gráficos (v16, Chart.js + mapa de calor en grilla CSS) ---------- */
+
+.graficos {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;
+  padding: 14px 20px 6px;
+}
+.graficos-tarjetas, .grafico-completo { grid-column: 1 / -1; }
+.graficos-tarjetas { margin-bottom: 0; }
+.graficos-tarjetas:empty { display: none; }
+.grafico-panel { min-width: 0; padding: 14px 16px 16px; box-shadow: none; }
+.grafico-titulo { margin: 0 0 10px; font-size: 0.95rem; font-weight: 600; }
+.grafico-extra { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.grafico-extra:empty { display: none; }
+.grafico-caja { position: relative; height: 260px; }
+.grafico-caja-alto { height: 320px; }
+.grafico-caja-auto { height: auto; overflow-x: auto; }
+.estado-grafico { min-height: 160px; padding: 24px 12px; }
+.grafico-pie { margin: 8px 0 0; color: var(--texto-2); font-size: 0.8rem; }
+
+.segmentos { display: inline-flex; border: 1px solid var(--borde); border-radius: 999px; overflow: hidden; }
+.segmento {
+  padding: 4px 12px; font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--texto-2);
+  background: transparent; border: 0; cursor: pointer;
+}
+.segmento + .segmento { border-left: 1px solid var(--borde); }
+.segmento:hover { color: var(--texto); }
+.segmento[aria-pressed="true"] { color: var(--fondo); background: var(--acento-suave); }
+.segmento:focus-visible { outline: 2px solid var(--acento-suave); outline-offset: -2px; }
+
+.calor {
+  display: grid; grid-template-columns: 36px repeat(24, minmax(14px, 1fr)); gap: 2px;
+  min-width: 520px; font-size: 0.7rem; color: var(--texto-2); font-variant-numeric: tabular-nums;
+}
+.calor-hora { text-align: center; line-height: 1.6; }
+.calor-dia { align-self: center; padding-right: 4px; }
+.calor-celda {
+  aspect-ratio: 1; min-height: 14px; border-radius: 3px;
+  background: rgba(169, 188, 212, 0.06); cursor: default;
+}
+.calor-celda:hover { outline: 1px solid var(--texto); }
+
+@media (max-width: 900px) {
+  .graficos { grid-template-columns: minmax(0, 1fr); padding: 12px 12px 4px; }
+  .grafico-caja { height: 240px; }
+}
 
 /* ---------- Ingreso y cambio de contraseña ---------- */
 
@@ -445,7 +501,7 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
   .resumen { padding: 0 4px 8px; }
   .tabla thead { display: none; }
   .tabla, .tabla tbody, .tabla tfoot, .tabla tr, .tabla td { display: block; width: 100%; }
-  .bloque .tabla { padding: 0 12px; }
+  .seccion-estadisticas .tabla { padding: 0 12px; }
   .tabla tfoot td { background: transparent; border-top: 0; }
   .tabla tfoot tr { border-color: var(--acento); }
   .tabla tr {

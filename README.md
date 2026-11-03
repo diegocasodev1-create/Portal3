@@ -27,7 +27,9 @@ Desde la v7 incluye además **Logs control de ingresos**: una página de solo le
 | `/cambiar-contrasena` | **Cambiar contraseña** (v12): obligatoria después de entrar con la contraseña por defecto; también voluntaria |
 | `/` | **Portal de administración** (inicio): tres cards, «Estadísticas del Portal Corporativo MiraGroup», «Centro Administración de contactos» y «Centro de administración principal» |
 | `/contactos` | **Centro Administración de contactos**: la administración de usuarios (hasta la v6 estaba en `/`) |
-| `/estadisticas` | **Estadísticas del Portal Corporativo MiraGroup** (v11): totales por portal y por usuario, detalle por portal y exportación a Excel (ver "Estadísticas") |
+| `/estadisticas` | **Estadísticas del Portal Corporativo MiraGroup** (v11; desde la v16, inicio con cards): una card «General por portal» y una por portal con el resumen de los últimos 30 días (ver "Estadísticas") |
+| `/estadisticas/general` | v16: gráficos y tabla del total por portal, con su propio filtro de fechas |
+| `/estadisticas/portal/<slug>` | v16: gráficos y pestañas Usuarios (general/detallado) de un portal (`energia`, `mirastock`…); «Portal no encontrado» si no existe |
 | `/historial` | **Logs control de ingresos** (historial completo): indicadores, gráfico por día, tabla paginada y exportación a Excel. Sin card en el inicio desde la v11; se llega desde «Historial completo» en `/estadisticas` |
 | `/administradores` | **Centro de administración principal** (v12): administradores en cards y edición con la contraseña de cada uno (ver "Administradores") |
 
@@ -101,6 +103,8 @@ login). Única excepción: `/api/latido`.
 | `GET /api/estadisticas/portales/csv` | El mismo cuadro en CSV, con fila «Total Portal Corporativo» (`tz_offset_min`) |
 | `GET /api/estadisticas/usuarios` | Una fila por usuario de un portal (`portal` obligatorio, `desde`/`hasta`, `correo` opcional: contiene, v13). → `{portal, correo, filas, total, totalSinFiltro, truncado}` |
 | `GET /api/estadisticas/usuarios/csv` | La misma lista en CSV (`tz_offset_min`, `correo`; tope 5.000 usuarios) |
+| `GET /api/estadisticas/series` | v16: sesiones, segundos y usuarios por día local, por portal y en total (`portal` opcional, `desde`/`hasta`, `tz_offset_min`; ver "Gráficos") |
+| `GET /api/estadisticas/distribucion` | v16: tipos de cierre, rangos de duración y matriz día × hora de un portal (`portal` obligatorio, `desde`/`hasta`, `tz_offset_min`) |
 
 Los errores siempre vienen como `{"detail": "mensaje en español"}`. `avisoCuenta: true` indica que la operación en
 SQL salió bien pero falló la cuenta de acceso; el `mensaje` trae el motivo y la interfaz lo muestra como aviso.
@@ -201,11 +205,31 @@ o retorno de carro lleva una `'` adelante (para que Excel no la ejecute como fó
 
 ## Estadísticas
 
-Página `/estadisticas` (v11), solo lectura sobre la misma vista. **Sesión = fila con `Resultado = 'OK'`**; los
-denegados no cuentan como sesión ni como usuario. Un filtro de fechas común (por defecto los últimos 30 días locales)
-y tres niveles en acordeón (`<details>`):
+Solo lectura sobre la misma vista. **Sesión = fila con `Resultado = 'OK'`**; los denegados no cuentan como sesión
+ni como usuario.
 
-1. **General por portal** (abierto): una fila por portal y la fila «Total Portal Corporativo». Columnas: Portal ·
+**Estructura (v16; antes, un acordeón en una sola página):**
+
+- **`/estadisticas`** es un inicio con cards (estilo del inicio de Portal3; 3 columnas en escritorio, 2 en tablet
+  y 1 en celular): «General por portal» y una por cada portal de la vista, generadas desde
+  `/api/estadisticas/portales` (sin código por portal). Cada card muestra el resumen de los últimos 30 días
+  («85 sesiones · 61 h 46 min» y los usuarios) y una franja con el color del portal. Mantiene «Historial completo».
+- Cada card abre su vista, con URL propia (Atrás del navegador y marcadores funcionan):
+  `/estadisticas/general` y `/estadisticas/portal/<slug>`. Mismas reglas de login que el resto (sin sesión →
+  `/login?siguiente=<ruta>`).
+- **Slug:** `/api/estadisticas/portales` trae `slug` en cada portal (`main._slug_portal`): ASCII en minúsculas,
+  sin tildes, y todo lo que no es letra o número pasa a `-` («Energía» → `energia`, «Bodega Norte» →
+  `bodega-norte`). Si dos portales dan el mismo slug, en orden alfabético el segundo lleva `-2`, el tercero `-3`…
+  La página busca el portal por su slug en esa respuesta: si no existe, muestra «Portal no encontrado» con un
+  enlace a `/estadisticas`. Un slug con otro formato (`[a-z0-9]+(-[a-z0-9]+)*`, hasta 64 caracteres) responde 404
+  con el mismo mensaje.
+- **Cada vista es independiente:** encabezado con «← Estadísticas» y el título de la sección; su propio filtro
+  Desde / Hasta con «Aplicar» (por defecto los últimos 30 días) y «Historial completo». Las fechas se recuerdan
+  durante la sesión del navegador (`sessionStorage`, claves `mira.estadisticas.rango.general` y
+  `mira.estadisticas.rango.portal.<slug>`); si el almacenamiento no está disponible, se usan los 30 días.
+- El contenido de cada vista va desplegado (gráficos arriba, ver "Gráficos de estadísticas"):
+
+1. **General por portal:** una fila por portal (el nombre enlaza a su vista) y la fila «Total Portal Corporativo». Columnas: Portal ·
    Usuarios únicos · Sesiones · Horas totales · Promedio por sesión · Última conexión.
    - Horas totales = suma de `TiempoSesionSeg`; el promedio considera solo las sesiones con tiempo medido. Si hay
      sesiones sin latidos, la celda agrega «medidas: N de M».
@@ -213,7 +237,7 @@ y tres niveles en acordeón (`<details>`):
      que cuentan como medidas y bajan el promedio.
    - En el total, los usuarios únicos se cuentan **sin repetir entre portales** (`GROUPING SETS`); sesiones y horas suman.
    - Aparecen todos los portales de la vista (`SELECT DISTINCT Portal`), aunque no tengan sesiones en el rango.
-2. **Un bloque por portal**, generado desde la respuesta anterior (sin código por portal), con pestañas:
+2. **Cada portal** (sin código por portal), con pestañas:
    - **Usuarios (general):** Usuario · Correo · Sesiones · Sin actividad (v14) · Horas totales · Promedio · Última conexión, de más a
      menos horas (luego más sesiones, luego correo).
      - v13: buscador «Correo» (contiene, sin distinguir mayúsculas) con «Buscar» o Enter, igual que en
@@ -221,7 +245,7 @@ y tres niveles en acordeón (`<details>`):
        la búsqueda». «Exportar a Excel» exporta lo filtrado. El texto buscado se mantiene al cambiar las fechas.
        Cada pestaña tiene su propio filtro, y el resumen del encabezado del portal no se filtra.
    - **Usuarios (detallado):** la tabla de `/historial` filtrada al portal, con correo, resultado, páginas y CSV.
-   - Cada bloque y pestaña carga sus datos recién al abrirse.
+   - La pestaña «Usuarios (detallado)» carga sus datos recién al elegirla.
 3. Los niveles 3 y 4 (funcionalidades y subfuncionalidades) se agregarán como otra entrada de `SUBVISTAS` en
    `estadisticas.js`, con su propio endpoint.
 
@@ -255,6 +279,53 @@ tildes, p. ej. `energia`). Más de 5.000 usuarios → `X-Historial-Truncado: 500
 
 La hora local de los CSV usa el desfase del navegador de hoy: en un rango que cruza un cambio de horario, la
 «Última conexión» puede correrse 1 h. En pantalla no pasa (convierte el navegador).
+
+## Gráficos de estadísticas (v16)
+
+`/estadisticas` muestra gráficos arriba de las tablas (que no cambian). Todo sale de `core.vHistorialAccesos`
+(solo lectura; sesión = fila `Resultado = 'OK'`), sin cambios en la base, los flujos ni Power Pages.
+
+- **General por portal:** tarjetas del «Total Portal Corporativo» (usuarios únicos, sesiones, horas totales y
+  promedio), dona del reparto por portal con selector Sesiones / Horas, uso por día (barras apiladas, una serie por
+  portal) y horas por portal (barras horizontales).
+- **Cada portal** (genérico, sin código por portal): tarjetas del portal, sesiones (barras) y horas (línea) por
+  día con dos ejes, top 10 usuarios por horas, cómo terminan las sesiones (dona con la misma prioridad que la columna
+  «Cierre»), duración por rangos (`< 5 min`, `5–15`, `15–30`, `30–60`, `> 1 h`; solo sesiones con tiempo, y aparte
+  «Sin actividad» y «Sin medir») y mapa de calor día de la semana × hora local.
+- **Carga:** cada vista pide y dibuja sus propios gráficos al abrirse (el inicio no carga Chart.js) y los
+  recarga al aplicar otras fechas. Cada gráfico se destruye (`chart.destroy()`) antes de redibujarse.
+- **Colores:** Energía `#d9a441`, MiraStock `#29b8ec` (único mapa por nombre, en `graficos.js`) y una paleta de 6
+  colores elegida por un hash del nombre para portales futuros.
+- **Accesibilidad:** cada gráfico tiene un título visible y un `aria-label` con un resumen. El mapa de calor es una
+  grilla CSS con la cantidad en el `title` de cada celda.
+
+**Chart.js 4.4.7** va alojado en `app/static/vendor/chart.umd.4.4.7.min.js` (UMD de `chart.js@4.4.7` de
+registry.npmjs.org, sha512 verificado contra el registro) con su licencia MIT (`chart.js-LICENSE.md`). Nada se carga
+desde un CDN. Funciona con la CSP estricta sin aflojarla: Chart.js 4 no usa `eval` ni `<style>` en línea y fija
+los tamaños por CSSOM (`element.style`), que la CSP permite; el mapa de calor usa lo mismo para la intensidad.
+
+```json
+GET /api/estadisticas/series?desde&hasta&tz_offset_min[&portal]
+{"dias": ["2026-11-01", "2026-11-02", ...],
+ "portales": [{"portal": "Energía", "sesiones": [0, 3, ...], "segundos": [0, 5400, ...], "usuarios": [0, 2, ...]}, ...],
+ "total": {"sesiones": [...], "segundos": [...], "usuarios": [...]}}
+
+GET /api/estadisticas/distribucion?portal=Energía&desde&hasta&tz_offset_min
+{"portal": "Energía",
+ "cierres": {"Botón": 4, "Inactividad": 11, "Sin actividad": 1, "En curso": 0, "No medida": 25, "Otro": 0},
+ "duracion": {"rangos": [{"etiqueta": "< 5 min", "sesiones": 5}, ...], "sinActividad": 1, "sinMedir": 25},
+ "calor": [[...24 valores...], ...7 filas, lunes = 0]}
+```
+
+- `/series`: días locales (`DATEADD(minute, tz_offset_min, Fecha)`), rellenos con 0 desde el día de `desde` hasta
+  el de `hasta` (exclusivo). Sin alguna fecha, el relleno va del primer al último día con datos. Más de 731 días →
+  422 en `hasta`. Sin `portal`, trae todos los portales conocidos (aunque estén en 0) y `total` cuenta los usuarios
+  sin repetir entre portales (`GROUPING SETS`); con `portal`, solo ese.
+- `/distribucion`: `portal` obligatorio. Rangos en segundos `[0, 300)`, `[300, 900)`, `[900, 1800)`,
+  `[1800, 3600)` y `≥ 3600` (exactamente 1 h cae en «> 1 h»). Día de la semana sin depender de `@@DATEFIRST`:
+  `DATEDIFF(day, '19000101', día) % 7` (el 1900-01-01 fue lunes → lunes = 0).
+- Los dos validan igual que el resto de las estadísticas (422 `{detail, errores}`; 401 sin sesión, antes de validar).
+- Validado contra producción el 2026-11-03 (solo lectura): los totales de los dos SQL coinciden con `/portales`.
 
 ## Cuentas de acceso en External ID
 

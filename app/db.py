@@ -678,3 +678,118 @@ def estadisticas_usuarios(
             for r in cur.fetchall()
         ]
     return filas[:tope], len(filas) > tope
+
+
+# ---------------------------------------------------------------------------
+# Gráficos de /estadisticas (v16; solo lectura; sesiones = filas OK). Hora local = DATEADD(minute, tz, Fecha).
+# ---------------------------------------------------------------------------
+
+# Mismo orden de prioridad que la columna «Cierre» (main._texto_cierre / comun.js textoCierre).
+TIPOS_CIERRE = ("Botón", "Inactividad", "Sin actividad", "En curso", "No medida", "Otro")
+_CASE_CIERRE = (
+    "CASE WHEN CierreExplicito = 1 THEN N'Botón'"
+    " WHEN EnCurso = 1 THEN N'En curso'"
+    " WHEN FinalSesion IS NOT NULL THEN N'Inactividad'"
+    " WHEN SinActividad = 1 THEN N'Sin actividad'"
+    " WHEN ISNULL(Medible, 0) = 0 THEN N'No medida'"
+    " ELSE N'Otro' END"
+)
+
+# Rangos de duración en segundos: [0, 300), [300, 900), [900, 1800), [1800, 3600) y ≥ 3600.
+# -1 = sin actividad y -2 = sin medir (quedan fuera de los rangos).
+BORDES_DURACION = (300, 900, 1800, 3600)
+_CASE_DURACION = (
+    "CASE WHEN SinActividad = 1 THEN -1"
+    " WHEN TiempoSesionSeg IS NULL THEN -2"
+    " WHEN TiempoSesionSeg < 300 THEN 0"
+    " WHEN TiempoSesionSeg < 900 THEN 1"
+    " WHEN TiempoSesionSeg < 1800 THEN 2"
+    " WHEN TiempoSesionSeg < 3600 THEN 3"
+    " ELSE 4 END"
+)
+
+
+def estadisticas_series(
+    portal: str | None, desde: datetime | None, hasta: datetime | None, tz_offset_min: int
+) -> dict[str, Any]:
+    """Sesiones, segundos y usuarios únicos por día local, por portal y en total (sin repetir usuarios).
+
+    Devuelve {"portales": nombres conocidos (o solo `portal`), "filas": [{dia, portal (None = total), ...}]}.
+    Los días sin datos no vienen: los rellena main.py.
+    """
+    where, params = _where_sesiones(portal, desde, hasta)
+    with _conexion() as conn:
+        cur = conn.cursor()
+        if portal:
+            conocidos = [portal]
+        else:
+            cur.execute("SELECT DISTINCT Portal FROM core.vHistorialAccesos WHERE Portal IS NOT NULL")
+            conocidos = [r[0] for r in cur.fetchall()]
+        # El día se calcula en una tabla derivada: GROUP BY no puede repetir una expresión con parámetros.
+        cur.execute(
+            "SELECT Dia, Portal, GROUPING(Portal), COUNT(*),"
+            " ISNULL(SUM(CAST(TiempoSesionSeg AS BIGINT)), 0), COUNT(DISTINCT Correo)"
+            " FROM (SELECT CAST(DATEADD(minute, ?, Fecha) AS date) AS Dia, Portal, Correo, TiempoSesionSeg"
+            f" FROM core.vHistorialAccesos{where} AND Portal IS NOT NULL AND Fecha IS NOT NULL) s"
+            " GROUP BY GROUPING SETS ((Dia, Portal), (Dia))"
+            " ORDER BY Dia",
+            tz_offset_min, *params,
+        )
+        filas = [
+            {
+                "dia": r[0] if isinstance(r[0], date) else date.fromisoformat(str(r[0])[:10]),
+                "portal": None if r[2] else r[1],
+                "sesiones": r[3], "segundos": int(r[4] or 0), "usuarios": r[5],
+            }
+            for r in cur.fetchall()
+        ]
+    return {"portales": sorted(set(conocidos), key=str.casefold), "filas": filas}
+
+
+def estadisticas_distribucion(
+    portal: str, desde: datetime | None, hasta: datetime | None, tz_offset_min: int
+) -> dict[str, Any]:
+    """Cómo terminan las sesiones, rangos de duración y matriz día de la semana × hora (local) de un portal.
+
+    El día de la semana no depende de @@DATEFIRST: el 1900-01-01 fue lunes, así que
+    DATEDIFF(day, '19000101', día) % 7 da lunes = 0 … domingo = 6.
+    """
+    where, params = _where_sesiones(portal, desde, hasta)
+    cierres = dict.fromkeys(TIPOS_CIERRE, 0)
+    duracion = [0] * (len(BORDES_DURACION) + 1)
+    sin_actividad = sin_medir = 0
+    calor = [[0] * 24 for _ in range(7)]
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT Cierre, COUNT(*) FROM (SELECT {_CASE_CIERRE} AS Cierre"
+            f" FROM core.vHistorialAccesos{where}) c GROUP BY Cierre",
+            *params,
+        )
+        for tipo, n in cur.fetchall():
+            cierres[tipo if tipo in cierres else "Otro"] += n
+        cur.execute(
+            f"SELECT Rango, COUNT(*) FROM (SELECT {_CASE_DURACION} AS Rango"
+            f" FROM core.vHistorialAccesos{where}) d GROUP BY Rango",
+            *params,
+        )
+        for rango, n in cur.fetchall():
+            if rango == -1:
+                sin_actividad += n
+            elif rango == -2:
+                sin_medir += n
+            else:
+                duracion[rango] += n
+        cur.execute(
+            "SELECT DATEDIFF(day, '19000101', CAST(L AS date)) % 7, DATEPART(hour, L), COUNT(*)"
+            " FROM (SELECT DATEADD(minute, ?, Fecha) AS L"
+            f" FROM core.vHistorialAccesos{where} AND Fecha IS NOT NULL) x"
+            " GROUP BY DATEDIFF(day, '19000101', CAST(L AS date)) % 7, DATEPART(hour, L)",
+            tz_offset_min, *params,
+        )
+        for dia_semana, hora, n in cur.fetchall():
+            calor[dia_semana][hora] += n
+    return {
+        "cierres": cierres, "duracion": duracion, "sinActividad": sin_actividad, "sinMedir": sin_medir,
+        "calor": calor,
+    }

@@ -4,9 +4,10 @@ import csv
 import io
 import json
 import logging
+import re
 import unicodedata
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from html import escape
 from http import HTTPStatus
 from pathlib import Path
@@ -92,6 +93,8 @@ _INICIO_HTML = _leer_plantilla(STATIC_DIR / "inicio.html")
 _CONTACTOS_HTML = _leer_plantilla(STATIC_DIR / "contactos.html")
 _HISTORIAL_HTML = _leer_plantilla(STATIC_DIR / "historial.html")
 _ESTADISTICAS_HTML = _leer_plantilla(STATIC_DIR / "estadisticas.html")
+_ESTADISTICAS_GENERAL_HTML = _leer_plantilla(STATIC_DIR / "estadisticas-general.html")
+_ESTADISTICAS_PORTAL_HTML = _leer_plantilla(STATIC_DIR / "estadisticas-portal.html")
 _ADMINISTRADORES_HTML = _leer_plantilla(STATIC_DIR / "administradores.html")
 _LOGIN_HTML = _leer_plantilla(STATIC_DIR / "login.html")
 _CAMBIAR_HTML = _leer_plantilla(STATIC_DIR / "cambiar-contrasena.html")
@@ -285,7 +288,7 @@ def _admin_de_pagina(request: Request) -> dict | None:
     return admin
 
 
-def _pagina_protegida(request: Request, html: str) -> HTMLResponse | RedirectResponse:
+def _pagina_protegida(request: Request, html: str, status_code: int = 200) -> HTMLResponse | RedirectResponse:
     """Sin sesión → /login; debe cambiar la contraseña → /cambiar-contrasena; si no, la página."""
     if not request.state.sesion:
         return _a_login(request)
@@ -301,7 +304,7 @@ def _pagina_protegida(request: Request, html: str) -> HTMLResponse | RedirectRes
         return resp
     if admin["DebeCambiarContrasena"]:
         return RedirectResponse("/cambiar-contrasena", status_code=303)
-    return HTMLResponse(html)
+    return HTMLResponse(html, status_code=status_code)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -322,6 +325,24 @@ def historial(request: Request):
 @app.get("/estadisticas", response_class=HTMLResponse)
 def estadisticas(request: Request):
     return _pagina_protegida(request, _ESTADISTICAS_HTML)
+
+
+@app.get("/estadisticas/general", response_class=HTMLResponse)
+def estadisticas_general(request: Request):
+    return _pagina_protegida(request, _ESTADISTICAS_GENERAL_HTML)
+
+
+# Slug de portal en la URL: minúsculas ASCII, números y guiones (p. ej. «energia», «bodega-norte», «portal-2»).
+_SLUG_VALIDO = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+MAX_LARGO_SLUG = 64
+
+
+@app.get("/estadisticas/portal/{slug}", response_class=HTMLResponse)
+def estadisticas_portal(request: Request, slug: str):
+    # La página resuelve el slug con /api/estadisticas/portales y muestra «Portal no encontrado» si no existe.
+    # Un slug con otro formato ni siquiera puede existir: la misma página, con 404.
+    valido = len(slug) <= MAX_LARGO_SLUG and _SLUG_VALIDO.fullmatch(slug) is not None
+    return _pagina_protegida(request, _ESTADISTICAS_PORTAL_HTML, 200 if valido else 404)
 
 
 @app.get("/administradores", response_class=HTMLResponse)
@@ -1105,6 +1126,28 @@ def _encabezados_sesiones(tz_offset_min: int) -> list[str]:
     ]
 
 
+def _slug_portal(nombre: str) -> str:
+    """«Energía» → «energia», «Bodega Norte/Sur» → «bodega-norte-sur» (para /estadisticas/portal/<slug>)."""
+    ascii_ = unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_).strip("-")[:MAX_LARGO_SLUG - 4].strip("-")
+    return slug or "portal"
+
+
+def _slugs_portales(nombres: list[str]) -> dict[str, str]:
+    """Slug único por portal: si dos dan el mismo, en orden alfabético el segundo lleva «-2», el tercero «-3»…"""
+    usados: set[str] = set()
+    slugs: dict[str, str] = {}
+    for nombre in sorted(nombres, key=lambda n: (n.casefold(), n)):
+        base = _slug_portal(nombre)
+        slug, n = base, 1
+        while slug in usados:
+            n += 1
+            slug = f"{base}-{n}"
+        usados.add(slug)
+        slugs[nombre] = slug
+    return slugs
+
+
 def _nombre_archivo(texto: str) -> str:
     """«Energía» → «energia»: solo letras y números ASCII para el nombre del CSV."""
     ascii_ = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode().lower()
@@ -1117,8 +1160,9 @@ def api_estadisticas_portales(
     filtros: db.FiltrosHistorial = Depends(_filtros_estadisticas),
 ):
     datos = db.estadisticas_portales(filtros.desde, filtros.hasta)
+    slugs = _slugs_portales([p["portal"] for p in datos["portales"]])
     return {
-        "portales": [_estadistica_json(p) for p in datos["portales"]],
+        "portales": [{**_estadistica_json(p), "slug": slugs[p["portal"]]} for p in datos["portales"]],
         "total": _estadistica_json(datos["total"]),
     }
 
@@ -1185,3 +1229,105 @@ def api_estadisticas_usuarios_csv(
         f"estadisticas_{_nombre_archivo(filtros.portal)}_usuarios",
         TOPE_USUARIOS_ESTADISTICAS if truncado else None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Gráficos de /estadisticas (v16; solo lectura)
+# ---------------------------------------------------------------------------
+
+MAX_DIAS_SERIES = 731
+ETIQUETAS_DURACION = ("< 5 min", "5–15 min", "15–30 min", "30–60 min", "> 1 h")
+
+
+def _filtros_series(
+    portal: str | None = None, desde: str | None = None, hasta: str | None = None
+) -> db.FiltrosHistorial:
+    """Fechas y portal opcional (sin portal = todos, desglosado por portal)."""
+    return _filtros_historial(portal=portal, desde=desde, hasta=hasta)
+
+
+def _filtros_distribucion(
+    portal: str | None = None, desde: str | None = None, hasta: str | None = None
+) -> db.FiltrosHistorial:
+    """Portal obligatorio y fechas (sin filtro de correo)."""
+    return _filtros_estadisticas_portal(portal=portal, correo=None, desde=desde, hasta=hasta)
+
+
+def _dia_local(fecha: datetime, tz_offset_min: int) -> date:
+    return (fecha + timedelta(minutes=tz_offset_min)).date()
+
+
+def _limites_series(filtros: db.FiltrosHistorial, tz_offset_min: int) -> tuple[date | None, date | None]:
+    """Primer y último día local del rango pedido (`hasta` es exclusivo); None si falta esa fecha."""
+    primero = _dia_local(filtros.desde, tz_offset_min) if filtros.desde else None
+    ultimo = _dia_local(filtros.hasta - timedelta(microseconds=1), tz_offset_min) if filtros.hasta else None
+    return primero, ultimo
+
+
+def _error_rango_series(primero: date, ultimo: date, mensaje: str) -> None:
+    if (ultimo - primero).days + 1 > MAX_DIAS_SERIES:
+        raise ErrorValidacion({"hasta": mensaje})
+
+
+@app.get("/api/estadisticas/series")
+def api_estadisticas_series(
+    admin: dict = Depends(require_admin),
+    filtros: db.FiltrosHistorial = Depends(_filtros_series),
+    tz_offset_min: int = Query(0, ge=-840, le=840),
+):
+    primero, ultimo = _limites_series(filtros, tz_offset_min)
+    if primero and ultimo:
+        _error_rango_series(primero, ultimo, f"El rango no puede superar los {MAX_DIAS_SERIES} días.")
+    datos = db.estadisticas_series(filtros.portal, filtros.desde, filtros.hasta, tz_offset_min)
+    filas = datos["filas"]
+    # Sin alguna de las fechas, el relleno va del primer al último día con datos.
+    dias_con_datos = [f["dia"] for f in filas]
+    primero = primero or min(dias_con_datos, default=None)
+    ultimo = ultimo or max(dias_con_datos, default=None)
+    if primero is None or ultimo is None or primero > ultimo:
+        dias: list[date] = []
+    else:
+        _error_rango_series(
+            primero, ultimo, f"El rango no puede superar los {MAX_DIAS_SERIES} días: indica «desde» y «hasta»."
+        )
+        dias = [primero + timedelta(days=i) for i in range((ultimo - primero).days + 1)]
+    indice = {d: i for i, d in enumerate(dias)}
+
+    def vacia() -> dict[str, list[int]]:
+        return {"sesiones": [0] * len(dias), "segundos": [0] * len(dias), "usuarios": [0] * len(dias)}
+
+    por_portal = {p: vacia() for p in datos["portales"]}
+    total = vacia()
+    for f in filas:
+        i = indice.get(f["dia"])
+        if i is None:
+            continue
+        destino = total if f["portal"] is None else por_portal.setdefault(f["portal"], vacia())
+        for campo in ("sesiones", "segundos", "usuarios"):
+            destino[campo][i] = f[campo]
+    return {
+        "dias": [d.isoformat() for d in dias],
+        "portales": [{"portal": p, **s} for p, s in sorted(por_portal.items(), key=lambda x: x[0].casefold())],
+        "total": total,
+    }
+
+
+@app.get("/api/estadisticas/distribucion")
+def api_estadisticas_distribucion(
+    admin: dict = Depends(require_admin),
+    filtros: db.FiltrosHistorial = Depends(_filtros_distribucion),
+    tz_offset_min: int = Query(0, ge=-840, le=840),
+):
+    datos = db.estadisticas_distribucion(filtros.portal, filtros.desde, filtros.hasta, tz_offset_min)
+    return {
+        "portal": filtros.portal,
+        "cierres": datos["cierres"],
+        "duracion": {
+            "rangos": [
+                {"etiqueta": etiqueta, "sesiones": n} for etiqueta, n in zip(ETIQUETAS_DURACION, datos["duracion"])
+            ],
+            "sinActividad": datos["sinActividad"],
+            "sinMedir": datos["sinMedir"],
+        },
+        "calor": datos["calor"],
+    }

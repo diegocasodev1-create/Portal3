@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Portal · Estadísticas | MiraGroup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/styles.css?v=16">
+  <script src="/static/vendor/chart.umd.4.4.7.min.js?v=16" defer></script>
+  <script src="/static/comun.js?v=16" defer></script>
+  <script src="/static/graficos.js?v=16" defer></script>
+  <script src="/static/estadisticas.js?v=16" defer></script>
+</head>
+<body data-vista="portal">
+  <a class="saltar" href="#contenido">Saltar al contenido</a>
+
+  <header class="encabezado">
+    <div class="marca">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h1 id="titulo-portal">Portal</h1>
+    </div>
+    <nav class="nav-inicio" aria-label="Navegación">
+      <a class="btn btn-fantasma" href="/estadisticas">← Estadísticas</a>
+    </nav>
+    <div class="sesion">
+      <span class="admin-nombre" id="admin-nombre" aria-label="Administrador conectado"></span>
+      <button type="button" class="btn btn-fantasma" id="btn-logout">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <main id="contenido" class="contenido">
+    <form class="barra card" id="form-rango" aria-label="Período" novalidate>
+      <div class="campo">
+        <label for="e-desde">Desde</label>
+        <input type="date" id="e-desde" aria-describedby="e-fechas">
+      </div>
+      <div class="campo">
+        <label for="e-hasta">Hasta</label>
+        <input type="date" id="e-hasta" aria-describedby="e-fechas">
+      </div>
+      <div class="barra-acciones">
+        <button type="submit" class="btn btn-primario" id="btn-aplicar">Aplicar</button>
+        <a class="btn btn-fantasma" href="/historial">Historial completo</a>
+      </div>
+      <p class="error-campo error-fechas" id="e-fechas" role="alert"></p>
+    </form>
+
+    <div class="estado" id="portal-carga">
+      <span class="spinner" aria-hidden="true"></span>
+      <span>Cargando…</span>
+    </div>
+
+    <div class="card card-aviso no-encontrado" id="portal-no-encontrado" role="alert" hidden>
+      <h2>Portal no encontrado</h2>
+      <p>No hay ningún portal con esa dirección en las estadísticas.</p>
+      <a class="btn btn-primario" href="/estadisticas">← Volver a Estadísticas</a>
+    </div>
+
+    <div class="estado estado-error" id="portal-error" role="alert" hidden>
+      <p id="portal-error-texto">No se pudieron cargar los datos.</p>
+      <button type="button" class="btn btn-secundario" id="portal-reintentar">Reintentar</button>
+    </div>
+
+    <!-- Gráficos del portal y pestañas «Usuarios (general)» / «Usuarios (detallado)» (los arma estadisticas.js). -->
+    <section class="card seccion-estadisticas" id="portal-cuerpo" aria-labelledby="titulo-portal" hidden>
+      <div class="pestanas" role="tablist"></div>
+      <div class="subvistas"></div>
+    </section>
+  </main>
+
+  <!-- Pantalla de sesión vencida -->
+  <div class="bloqueo" id="bloqueo" hidden>
+    <div class="card card-aviso" role="alertdialog" aria-modal="true" aria-labelledby="bloqueo-titulo" aria-describedby="bloqueo-texto">
+      <img src="/static/logoMG.png" alt="MiraGroup" class="logo">
+      <h2 id="bloqueo-titulo">Tu sesión venció</h2>
+      <p id="bloqueo-texto">Por seguridad, vuelve a ingresar con tu correo y contraseña.</p>
+      <a class="btn btn-primario" href="/login" id="bloqueo-link">Ingresar</a>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>

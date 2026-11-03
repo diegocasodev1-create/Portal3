@@ -1,8 +1,10 @@
-/* Estadísticas del Portal Corporativo – lógica de la página (JavaScript sin librerías).
+/* Estadísticas del Portal Corporativo – vistas «General por portal» y «Portal <nombre>» (JavaScript sin
+   librerías, más Chart.js vía graficos.js).
 
-   Niveles: 1) «General por portal»; 2) un bloque por cada portal que devuelve la API, con sub-vistas en
-   pestañas (SUBVISTAS). Los niveles 3 y 4 (funcionalidades y subfuncionalidades) se sumarán como otra
-   entrada de SUBVISTAS, sin tocar el resto de la página. */
+   Cada vista es su propia página (/estadisticas/general y /estadisticas/portal/<slug>), con su filtro de
+   fechas guardado en sessionStorage (una clave por vista). <body data-vista="general|portal"> elige el modo.
+   La vista de portal tiene sub-vistas en pestañas (SUBVISTAS): los niveles 3 y 4 (funcionalidades y
+   subfuncionalidades) se sumarán como otra entrada de SUBVISTAS, sin tocar el resto. */
 "use strict";
 
 (() => {
@@ -10,9 +12,22 @@
     $, el, api, setOcupado, toast,
     numero, textoDia, agregarRango, tzOffsetMin, fechaLocal, duracion, textoCierre, textoTiempo, textoFinal, descargarCsv,
   } = window.Mira;
+  const G = window.MiraGraficos;
 
   const DIAS_POR_DEFECTO = 30;
   const TOTAL_PORTAL_CORPORATIVO = "Total Portal Corporativo";
+
+  // Modo de la página y slug del portal (último tramo de /estadisticas/portal/<slug>).
+  const VISTA = document.body.dataset.vista;
+  function slugDeLaUrl() {
+    try {
+      return decodeURIComponent(location.pathname.replace(/\/+$/, "").split("/").pop() || "");
+    } catch (e) {
+      return "";  // %-codificación inválida: ningún portal coincide («Portal no encontrado»)
+    }
+  }
+  const SLUG = VISTA === "portal" ? slugDeLaUrl() : "";
+  const CLAVE_RANGO = VISTA === "portal" ? `mira.estadisticas.rango.portal.${SLUG}` : "mira.estadisticas.rango.general";
 
   const estado = {
     rango: null,  // URLSearchParams con desde/hasta aplicados
@@ -20,9 +35,8 @@
   };
 
   // Vistas que dependen del rango: { visible(), cargar(), version }. Solo se cargan las visibles;
-  // las demás se cargan al abrirse (bloque o pestaña), así no se consulta lo que nadie mira.
+  // una pestaña oculta se carga al elegirla, así no se consulta lo que nadie mira.
   const vistas = [];
-  const bloques = new Map(); // portal → { meta }
 
   let contadorIds = 0;
   const nuevoId = (base) => `${base}-${++contadorIds}`;
@@ -52,11 +66,51 @@
     return p;
   }
 
+  // /api/estadisticas/portales del rango aplicado: una sola consulta por versión, compartida por la tabla
+  // general y los gráficos. Si falla, se olvida para que «Reintentar» vuelva a consultar.
+  let promesaPortales = null;
+  let versionPortales = -1;
+  function datosPortales() {
+    if (!promesaPortales || versionPortales !== estado.version) {
+      versionPortales = estado.version;
+      const promesa = api("GET", `/api/estadisticas/portales?${parametros()}`);
+      promesaPortales = promesa;
+      promesa.catch(() => {
+        if (promesaPortales === promesa) promesaPortales = null;
+      });
+    }
+    return promesaPortales;
+  }
+
   // -------------------------------------------------------------------------
   // Filtro de fechas común
   // -------------------------------------------------------------------------
 
-  function fijarUltimosDias() {
+  // Fechas recordadas durante la sesión del navegador (una clave por vista). Si el almacenamiento no está
+  // disponible (modo privado, bloqueado), la vista usa los últimos 30 días.
+  const DIA_VALIDO = /^\d{4}-\d{2}-\d{2}$/;
+
+  function leerRango() {
+    try {
+      const r = JSON.parse(sessionStorage.getItem(CLAVE_RANGO) || "null");
+      if (r && DIA_VALIDO.test(r.desde) && DIA_VALIDO.test(r.hasta) && r.desde <= r.hasta) return r;
+    } catch (e) { /* sin almacenamiento o valor corrupto: se usan las fechas por defecto */ }
+    return null;
+  }
+
+  function guardarRango(desde, hasta) {
+    try {
+      sessionStorage.setItem(CLAVE_RANGO, JSON.stringify({ desde, hasta }));
+    } catch (e) { /* sin almacenamiento: las fechas no se recuerdan */ }
+  }
+
+  function fijarRangoInicial() {
+    const guardado = leerRango();
+    if (guardado) {
+      $("e-desde").value = guardado.desde;
+      $("e-hasta").value = guardado.hasta;
+      return;
+    }
     const hoy = new Date();
     $("e-hasta").value = textoDia(hoy);
     $("e-desde").value = textoDia(new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - (DIAS_POR_DEFECTO - 1)));
@@ -78,6 +132,7 @@
       return;
     }
     marcarErrorFechas("");
+    if (desde && hasta) guardarRango(desde, hasta);
     estado.rango = agregarRango(new URLSearchParams(), desde, hasta);
     estado.version++;
     refrescarVisibles();
@@ -193,17 +248,11 @@
       : `${numero.format(cantidad)} de ${numero.format(de)} ${palabra}`;
   }
 
-  function textoMeta(d) {
-    if (!d.sesiones) return "Sin sesiones en el período";
-    const sesiones = `${numero.format(d.sesiones)} ${d.sesiones === 1 ? "sesión" : "sesiones"}`;
-    return d.segundosTotales === null ? sesiones : `${sesiones} · ${duracion(d.segundosTotales)}`;
-  }
-
   // -------------------------------------------------------------------------
-  // Nivel 1: General por portal (siempre se carga: de aquí sale la lista de portales)
+  // Vista «General por portal»: tabla del total por portal
   // -------------------------------------------------------------------------
 
-  (() => {
+  function montarTablaGeneral() {
     const exportar = el("button", { type: "button", class: "btn btn-secundario btn-chico", text: "Exportar a Excel" });
     const tabla = crearTabla({
       columnas: [{ titulo: "Portal" }, { titulo: "Usuarios únicos", clase: "td-num" }, ...columnasSesiones(false)],
@@ -226,9 +275,13 @@
       "portales",
     ));
 
+    // El nombre del portal enlaza a su vista (la fila del total no tiene slug).
     function filaPortal(nombre, d) {
+      const celda = d.slug
+        ? el("td", { "data-label": "Portal" }, el("a", { class: "enlace-portal", href: `/estadisticas/portal/${encodeURIComponent(d.slug)}`, text: nombre }))
+        : el("td", { "data-label": "Portal", text: nombre });
       return el("tr", null, [
-        el("td", { "data-label": "Portal", text: nombre }),
+        celda,
         el("td", { class: "td-num", "data-label": "Usuarios únicos", text: numero.format(d.usuariosUnicos) }),
         ...celdasSesiones(d, false),
       ]);
@@ -240,10 +293,9 @@
       async cargar() {
         const actual = ++pedido;
         tabla.mostrar("carga");
-        $("general-meta").textContent = "";
         let r;
         try {
-          r = await api("GET", `/api/estadisticas/portales?${parametros()}`);
+          r = await datosPortales();
         } catch (e) {
           if (actual !== pedido) return;
           tabla.mostrar("error", e.message);
@@ -259,16 +311,363 @@
         const total = filaPortal(TOTAL_PORTAL_CORPORATIVO, r.total);
         total.classList.add("fila-total");
         tabla.pie.replaceChildren(total);
-        $("general-meta").textContent = textoMeta(r.total);
-        // Un portal nuevo en la vista aparece como un bloque más (cerrado: se carga al abrirlo).
-        for (const p of r.portales) asegurarBloque(p.portal).meta.textContent = textoMeta(p);
         tabla.mostrar("tabla");
       },
     });
-  })();
+  }
+
 
   // -------------------------------------------------------------------------
-  // Nivel 2: un bloque por portal, con sub-vistas en pestañas
+  // Gráficos (v16): piezas comunes
+  // -------------------------------------------------------------------------
+
+  const fmtSesiones = (n) => `${numero.format(n)} ${n === 1 ? "sesión" : "sesiones"}`;
+  const porcentaje = (n, total) => (total ? `${numero.format(Math.round((n / total) * 100))} %` : "0 %");
+
+  // Tooltip de un valor en horas: muestra la duración exacta («52 h 10 min») desde los segundos.
+  const tooltipDuracion = (segundosDe) => ({
+    callbacks: { label: (ctx) => ` ${ctx.dataset.label || ctx.label}: ${duracion(segundosDe(ctx))}` },
+  });
+  const ejeHoras = { beginAtZero: true, ticks: { callback: (v) => G.textoHoras(v) } };
+  const ejeEnteros = { beginAtZero: true, ticks: { precision: 0 } };
+
+  // Sección de gráficos con su propia vista (carga diferida y versión por rango).
+  function seccionGraficos(visible, cargar) {
+    const nodo = el("div", { class: "graficos" });
+    const vista = registrarVista({ visible, cargar: () => cargar(vista) });
+    return { nodo, vista };
+  }
+
+  // Ejecuta `pedir` y avisa a los paneles; descarta respuestas viejas (otro rango o reintento).
+  async function cargarPaneles(vista, paneles, pedir) {
+    vista.pedido = (vista.pedido || 0) + 1;
+    const actual = vista.pedido;
+    paneles.forEach((p) => p.mostrar("carga"));
+    try {
+      const datos = await pedir();
+      return actual === vista.pedido ? datos : null;
+    } catch (e) {
+      // La tabla ya avisa los errores con un toast; aquí basta el estado de cada panel.
+      if (actual === vista.pedido) paneles.forEach((p) => p.mostrar("error", e.message));
+      return null;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Vista «General por portal»: gráficos (arriba de la tabla)
+  // -------------------------------------------------------------------------
+
+  function montarGraficosGeneral() {
+    const reintentar = () => seccion.vista.cargar();
+    const tarjetas = el("div", { class: "indicadores graficos-tarjetas" });
+    const panelReparto = G.crearPanel({ titulo: "Reparto por portal", reintentar });
+    const panelDias = G.crearPanel({ titulo: "Uso por día (sesiones por portal)", ancho: "completo", reintentar });
+    const panelHoras = G.crearPanel({ titulo: "Horas por portal", reintentar });
+    const paneles = [panelReparto, panelDias, panelHoras];
+
+    // Selector Sesiones / Horas de la dona.
+    let modo = "sesiones";
+    let ultimo = null;
+    const segmentos = ["sesiones", "horas"].map((valor) => {
+      const boton = el("button", {
+        type: "button", class: "segmento", "aria-pressed": String(valor === modo),
+        text: valor === "sesiones" ? "Sesiones" : "Horas",
+      });
+      boton.addEventListener("click", () => {
+        modo = valor;
+        segmentos.forEach((b, i) => b.setAttribute("aria-pressed", String(["sesiones", "horas"][i] === modo)));
+        if (ultimo) dibujarReparto(ultimo);
+      });
+      return boton;
+    });
+    panelReparto.extra.append(el("div", { class: "segmentos", role: "group", "aria-label": "Medir el reparto por" }, segmentos));
+
+    const seccion = seccionGraficos(() => true, async (vista) => {
+      tarjetas.replaceChildren();
+      const datos = await cargarPaneles(vista, paneles, () => Promise.all([
+        datosPortales(),
+        api("GET", `/api/estadisticas/series?${parametros({ tz_offset_min: tzOffsetMin() })}`),
+      ]));
+      if (!datos) return;
+      const [portales, series] = datos;
+      ultimo = portales;
+      G.tarjetas(tarjetas, portales.total);
+      dibujarReparto(portales);
+      dibujarDias(series);
+      dibujarHoras(portales);
+    });
+    seccion.nodo.append(tarjetas, ...paneles.map((p) => p.nodo));
+    $("general-cuerpo").prepend(seccion.nodo);
+
+    function dibujarReparto(r) {
+      const valores = r.portales.map((p) => (modo === "sesiones" ? p.sesiones : G.horas(p.segundosTotales)));
+      const total = valores.reduce((a, b) => a + b, 0);
+      if (!total) {
+        panelReparto.mostrar("vacio");
+        return;
+      }
+      const texto = (i) => (modo === "sesiones"
+        ? fmtSesiones(r.portales[i].sesiones) : duracion(r.portales[i].segundosTotales || 0));
+      panelReparto.dibujar({
+        type: "doughnut",
+        data: {
+          labels: r.portales.map((p) => p.portal),
+          datasets: [{
+            data: valores,
+            backgroundColor: r.portales.map((p) => G.colorPortal(p.portal)),
+            borderColor: "rgba(3, 8, 20, 0.9)", borderWidth: 2,
+          }],
+        },
+        options: {
+          cutout: "62%",
+          plugins: {
+            legend: { position: "bottom" },
+            tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${texto(ctx.dataIndex)} (${porcentaje(valores[ctx.dataIndex], total)})` } },
+          },
+        },
+      }, r.portales.map((p, i) => `${p.portal} ${texto(i)} (${porcentaje(valores[i], total)})`).join(", ") + ".");
+    }
+
+    function dibujarDias(s) {
+      if (!s.total.sesiones.some((n) => n > 0)) {
+        panelDias.mostrar("vacio");
+        return;
+      }
+      panelDias.dibujar({
+        type: "bar",
+        data: {
+          labels: s.dias.map(G.diaCorto),
+          datasets: s.portales.map((p) => ({
+            label: p.portal, data: p.sesiones,
+            backgroundColor: G.colorPortal(p.portal), borderRadius: 3, maxBarThickness: 28,
+          })),
+        },
+        options: {
+          scales: { x: { stacked: true, grid: { display: false } }, y: { ...ejeEnteros, stacked: true } },
+          plugins: {
+            legend: { position: "bottom" },
+            tooltip: {
+              mode: "index", intersect: false,
+              callbacks: { footer: (items) => `Total: ${fmtSesiones(s.total.sesiones[items[0].dataIndex])}` },
+            },
+          },
+        },
+      }, G.resumenSerie(s.dias, s.total.sesiones, fmtSesiones));
+    }
+
+    function dibujarHoras(r) {
+      if (!r.portales.some((p) => p.segundosTotales)) {
+        panelHoras.mostrar("vacio");
+        return;
+      }
+      panelHoras.dibujar({
+        type: "bar",
+        data: {
+          labels: r.portales.map((p) => p.portal),
+          datasets: [{
+            label: "Horas", data: r.portales.map((p) => G.horas(p.segundosTotales)),
+            backgroundColor: r.portales.map((p) => G.colorPortal(p.portal)), borderRadius: 4, maxBarThickness: 34,
+          }],
+        },
+        options: {
+          indexAxis: "y",
+          scales: { x: ejeHoras, y: { grid: { display: false } } },
+          plugins: {
+            legend: { display: false },
+            tooltip: tooltipDuracion((ctx) => r.portales[ctx.dataIndex].segundosTotales || 0),
+          },
+        },
+      }, r.portales.map((p) => `${p.portal} ${duracion(p.segundosTotales || 0)}`).join(", ") + ".");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Gráficos de cada portal (genéricos: sirven para cualquier portal que devuelva la API)
+  // -------------------------------------------------------------------------
+
+  function graficosPortal(portal) {
+    const color = G.colorPortal(portal);
+    const reintentar = () => seccion.vista.cargar();
+    const tarjetas = el("div", { class: "indicadores graficos-tarjetas" });
+    const panelDias = G.crearPanel({ titulo: "Sesiones y horas por día", ancho: "completo", alto: "alto", reintentar });
+    const panelTop = G.crearPanel({ titulo: "Top 10 usuarios por horas", alto: "alto", reintentar });
+    const panelCierres = G.crearPanel({ titulo: "Cómo terminan las sesiones", alto: "alto", reintentar });
+    const panelDuracion = G.crearPanel({ titulo: "Duración de las sesiones", reintentar });
+    const panelCalor = G.crearPanel({
+      titulo: "Sesiones por día de la semana y hora", ancho: "completo", alto: "auto", reintentar, conLienzo: false,
+    });
+    const paneles = [panelDias, panelTop, panelCierres, panelDuracion, panelCalor];
+
+    const seccion = seccionGraficos(() => true, async (vista) => {
+      tarjetas.replaceChildren();
+      const conTz = (extra) => parametros({ portal, tz_offset_min: tzOffsetMin(), ...extra });
+      const datos = await cargarPaneles(vista, paneles, () => Promise.all([
+        datosPortales(),
+        api("GET", `/api/estadisticas/series?${conTz()}`),
+        api("GET", `/api/estadisticas/distribucion?${conTz()}`),
+        api("GET", `/api/estadisticas/usuarios?${parametros({ portal })}`),
+      ]));
+      if (!datos) return;
+      const [portales, series, distribucion, usuarios] = datos;
+      const resumen = portales.portales.find((p) => p.portal === portal)
+        || { usuariosUnicos: 0, sesiones: 0, segundosTotales: null, promedioSeg: null };
+      G.tarjetas(tarjetas, resumen);
+      if (!resumen.sesiones) {
+        paneles.forEach((p) => p.mostrar("vacio"));
+        return;
+      }
+      dibujarDias(series);
+      dibujarTop(usuarios.filas);
+      dibujarCierres(distribucion.cierres);
+      dibujarDuracion(distribucion.duracion);
+      G.mapaCalor(panelCalor, distribucion.calor, color);
+    });
+    seccion.nodo.append(tarjetas, ...paneles.map((p) => p.nodo));
+
+    function dibujarDias(s) {
+      const p = s.portales[0] || { sesiones: s.dias.map(() => 0), segundos: s.dias.map(() => 0) };
+      if (!p.sesiones.some((n) => n > 0)) {
+        panelDias.mostrar("vacio");
+        return;
+      }
+      panelDias.dibujar({
+        type: "bar",  // cada serie define su tipo (barras y línea)
+        data: {
+          labels: s.dias.map(G.diaCorto),
+          datasets: [
+            {
+              type: "bar", label: "Sesiones", data: p.sesiones, yAxisID: "y",
+              backgroundColor: G.conAlfa(color, 0.75), borderRadius: 3, maxBarThickness: 28, order: 2,
+            },
+            {
+              type: "line", label: "Horas", data: p.segundos.map(G.horas), yAxisID: "y1",
+              borderColor: variableTexto(), backgroundColor: variableTexto(), pointRadius: 2, tension: 0.25, order: 1,
+            },
+          ],
+        },
+        options: {
+          interaction: { mode: "index", intersect: false },
+          scales: {
+            x: { grid: { display: false } },
+            y: { ...ejeEnteros, position: "left", title: { display: true, text: "Sesiones" } },
+            y1: { ...ejeHoras, position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "Horas" } },
+          },
+          plugins: {
+            legend: { position: "bottom" },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => (ctx.dataset.yAxisID === "y1"
+                  ? ` Horas: ${duracion(p.segundos[ctx.dataIndex])}`
+                  : ` Sesiones: ${numero.format(ctx.parsed.y)}`),
+              },
+            },
+          },
+        },
+      }, `${G.resumenSerie(s.dias, p.sesiones, fmtSesiones)} Horas en total: ${duracion(p.segundos.reduce((a, b) => a + b, 0))}.`);
+    }
+
+    function dibujarTop(filas) {
+      const top = filas.filter((u) => u.segundosTotales > 0).slice(0, 10);
+      if (!top.length) {
+        panelTop.mostrar("vacio");
+        return;
+      }
+      const nombre = (u) => u.usuario || u.correo || "—";
+      panelTop.dibujar({
+        type: "bar",
+        data: {
+          labels: top.map(nombre),
+          datasets: [{
+            label: "Horas", data: top.map((u) => G.horas(u.segundosTotales)),
+            backgroundColor: G.conAlfa(color, 0.8), borderRadius: 4, maxBarThickness: 22,
+          }],
+        },
+        options: {
+          indexAxis: "y",
+          scales: { x: ejeHoras, y: { grid: { display: false }, ticks: { autoSkip: false } } },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: (items) => nombre(top[items[0].dataIndex]),
+                label: (ctx) => ` ${duracion(top[ctx.dataIndex].segundosTotales)} · ${fmtSesiones(top[ctx.dataIndex].sesiones)}`,
+                afterLabel: (ctx) => (top[ctx.dataIndex].usuario ? ` ${top[ctx.dataIndex].correo}` : ""),
+              },
+            },
+          },
+        },
+      }, top.slice(0, 3).map((u, i) => `${i + 1}. ${nombre(u)} ${duracion(u.segundosTotales)}`).join("; ") + ".");
+    }
+
+    function dibujarCierres(cierres) {
+      const tipos = Object.keys(cierres).filter((t) => t !== "Otro" || cierres[t] > 0);
+      const total = tipos.reduce((a, t) => a + cierres[t], 0);
+      if (!total) {
+        panelCierres.mostrar("vacio");
+        return;
+      }
+      panelCierres.dibujar({
+        type: "doughnut",
+        data: {
+          labels: tipos,
+          datasets: [{
+            data: tipos.map((t) => cierres[t]),
+            backgroundColor: tipos.map((t) => G.COLORES_CIERRE[t] || "#6c7f99"),
+            borderColor: "rgba(3, 8, 20, 0.9)", borderWidth: 2,
+          }],
+        },
+        options: {
+          cutout: "58%",
+          plugins: {
+            legend: { position: "bottom" },
+            tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${fmtSesiones(ctx.parsed)} (${porcentaje(ctx.parsed, total)})` } },
+          },
+        },
+      }, tipos.map((t) => `${t} ${numero.format(cierres[t])}`).join(", ") + ".");
+    }
+
+    function dibujarDuracion(d) {
+      const total = d.rangos.reduce((a, r) => a + r.sesiones, 0);
+      if (!total) {
+        panelDuracion.mostrar("vacio");
+      } else {
+        panelDuracion.dibujar({
+          type: "bar",
+          data: {
+            labels: d.rangos.map((r) => r.etiqueta),
+            datasets: [{
+              label: "Sesiones", data: d.rangos.map((r) => r.sesiones),
+              backgroundColor: G.conAlfa(color, 0.8), borderRadius: 4, maxBarThickness: 46,
+            }],
+          },
+          options: {
+            scales: { x: { grid: { display: false } }, y: ejeEnteros },
+            plugins: {
+              legend: { display: false },
+              tooltip: { callbacks: { label: (ctx) => ` ${fmtSesiones(ctx.parsed.y)} (${porcentaje(ctx.parsed.y, total)})` } },
+            },
+          },
+        }, d.rangos.map((r) => `${r.etiqueta}: ${numero.format(r.sesiones)}`).join(", ") + ".");
+      }
+      const notas = [];
+      if (d.sinActividad) notas.push(`Sin actividad: ${numero.format(d.sinActividad)}`);
+      if (d.sinMedir) notas.push(`Sin medir: ${numero.format(d.sinMedir)}`);
+      // También con «vacío»: explica por qué no hay barras. Sin notas, el pie se limpia.
+      panelDuracion.pie(notas.length ? `Solo sesiones con tiempo medido. Aparte: ${notas.join(" · ")}.` : "");
+    }
+
+    return seccion.nodo;
+  }
+
+  // Color del texto principal (la línea de horas va en blanco para distinguirse de las barras del portal).
+  let colorTexto = null;
+  function variableTexto() {
+    if (!colorTexto) colorTexto = getComputedStyle(document.documentElement).getPropertyValue("--texto").trim() || "#ffffff";
+    return colorTexto;
+  }
+
+  // -------------------------------------------------------------------------
+  // Vista «Portal <nombre>»: gráficos y sub-vistas en pestañas
   // -------------------------------------------------------------------------
 
   // Usuarios (general): una fila por usuario, de más a menos horas, con buscador por correo.
@@ -477,14 +876,13 @@
     { titulo: "Usuarios (detallado)", montar: vistaDetalle },
   ];
 
-  function asegurarBloque(portal) {
-    if (bloques.has(portal)) return bloques.get(portal);
-
-    const nodo = $("tpl-portal").content.firstElementChild.cloneNode(true);
-    nodo.querySelector(".bloque-nombre").textContent = `Portal ${portal}`;
-    const tablist = nodo.querySelector(".pestanas");
+  // Arma la vista de un portal dentro de #portal-cuerpo: gráficos arriba y las pestañas de SUBVISTAS.
+  function montarPortal(portal) {
+    const cuerpo = $("portal-cuerpo");
+    const tablist = cuerpo.querySelector(".pestanas");
     tablist.setAttribute("aria-label", `Vistas del portal ${portal}`);
-    const contenedor = nodo.querySelector(".subvistas");
+    const contenedor = cuerpo.querySelector(".subvistas");
+    tablist.before(graficosPortal(portal));
 
     const pestanas = SUBVISTAS.map((def, i) => {
       const idPanel = nuevoId("panel");
@@ -494,7 +892,7 @@
         type: "button", role: "tab", class: "pestana", id: idPestana, "aria-controls": idPanel,
         "aria-selected": String(i === 0), tabindex: i === 0 ? "0" : "-1", text: def.titulo,
       });
-      const vista = registrarVista({ visible: () => nodo.open && !panel.hidden, cargar: () => {} });
+      const vista = registrarVista({ visible: () => !panel.hidden, cargar: () => {} });
       def.montar(panel, portal, vista);
       tablist.append(boton);
       contenedor.append(panel);
@@ -522,12 +920,40 @@
         seleccionar(destino, true);
       });
     });
-    nodo.addEventListener("toggle", refrescarVisibles);
+  }
 
-    const bloque = { meta: nodo.querySelector(".bloque-meta") };
-    bloques.set(portal, bloque);
-    $("bloques-portales").append(nodo);
-    return bloque;
+  // Busca el portal del slug en /api/estadisticas/portales (trae todos los portales conocidos, con su slug).
+  let portalMontado = false;
+  async function resolverPortal() {
+    $("portal-carga").hidden = false;
+    $("portal-error").hidden = true;
+    let r;
+    try {
+      r = await datosPortales();
+    } catch (e) {
+      $("portal-carga").hidden = true;
+      $("portal-error-texto").textContent = e.message || "No se pudieron cargar los datos.";
+      $("portal-error").hidden = false;
+      avisarError(e);
+      return;
+    }
+    $("portal-carga").hidden = true;
+    const p = r.portales.find((x) => x.slug === SLUG);
+    if (!p) {
+      $("form-rango").hidden = true;
+      $("portal-no-encontrado").hidden = false;
+      $("titulo-portal").textContent = "Portal no encontrado";
+      document.title = "Portal no encontrado · Estadísticas | MiraGroup";
+      return;
+    }
+    $("titulo-portal").textContent = `Portal ${p.portal}`;
+    document.title = `Portal ${p.portal} · Estadísticas | MiraGroup`;
+    if (!portalMontado) {
+      portalMontado = true;
+      montarPortal(p.portal);
+    }
+    $("portal-cuerpo").hidden = false;
+    refrescarVisibles();
   }
 
   // -------------------------------------------------------------------------
@@ -539,6 +965,14 @@
     aplicarRango();
   });
 
-  fijarUltimosDias();
-  aplicarRango();
+  fijarRangoInicial();
+  if (VISTA === "general") {
+    montarTablaGeneral();
+    montarGraficosGeneral();
+    aplicarRango();
+  } else if (VISTA === "portal") {
+    $("portal-reintentar").addEventListener("click", resolverPortal);
+    aplicarRango();
+    resolverPortal();
+  }
 })();

@@ -8,7 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
 
-## Current status (as of 2026-11-03; v13 + v14 and v15 deployed that day)
+## Current status (as of 2026-11-03; v13 + v14 and v15 deployed that day; v16 ready locally, NOT deployed)
+
+### v16 (2026-11-03): charts in `/estadisticas` (Chart.js) + one page per section — NOT DEPLOYED
+- Asked for by the user. Details under "Charts" in Architecture. **810 tests pass** (new `tests/test_graficos.py`). JS checked with esprima (not the vendor file). Static `?v=16`.
+- User decisions (2026-11-03): Chart.js hosted in the repo (no CDN); one portal-color map in `graficos.js` (`{"energía": "#d9a441", "mirastock": "#29b8ec"}`, lowercase key) + a 6-color palette by name hash for future portals; `/series` without dates fills between the first and last day with data; 731-day cap; no chart by Cliente for now.
+- Chart.js **4.4.7** UMD downloaded from registry.npmjs.org (tarball sha512 checked against the registry's `dist.integrity`), saved as `app/static/vendor/chart.umd.4.4.7.min.js` (sha256 `2812cb88…b632cb`) + `chart.js-LICENSE.md` (MIT). It has no `eval`/`new Function`/inline `<style>`, so the CSP is unchanged.
+- Read-only prod check (approved by the user, 2026-11-03): `db.estadisticas_series` and `db.estadisticas_distribucion` ran on Azure SQL and every total matched `db.estadisticas_portales` (last 30 days and all history; Energía 41 sessions, MiraStock 44).
+- The user reviewed the charts locally (2026-11-03: «se ven muy bien») and asked, inside the same v16, to drop the accordion: `/estadisticas` becomes a home with cards and each section gets its own page and date filter. Details under "Charts" in Architecture. **866 tests pass** (new `tests/test_estadisticas_vistas.py`). Still `?v=16` (never deployed).
+  - User decisions (2026-11-03): `slug` field in `/api/estadisticas/portales` computed and tested in Python; repeated slugs → the second (alphabetical) gets `-2`; «Historial completo» on the home and in each view.
+- Pending: the user's browser review of the new structure, then OK for commit + build + deploy of image v16.
 
 ### v15 (2026-11-03): server-side protection against inflated sessions + MiraStock key renewal — DEPLOYED
 - Asked for by the user. The MiraStock and Energía JS already close the whole session after 30 min without activity and send no heartbeats without real activity (the user's side); v15 protects against late heartbeats (PC waking up, old tab, cached JS).
@@ -243,7 +252,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Verified:
   - The portal public key loads (local and Azure).
   - `/health`, the no-session page, and the 401/404 checks pass.
-  - **758 tests pass** (v15, locally; `tests/test_sin_auth.py` no longer exists).
+  - **866 tests pass** (v16, locally; `tests/test_sin_auth.py` no longer exists).
   - v11 statistics match independent SQL on the production view (2026-10-30).
   - Code-only sign-in with a federated/mail account works.
   - Welcome emails arrive at other domains (per the user).
@@ -331,7 +340,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - CORS: custom `cors_latido` middleware for this route only. Origins from `LATIDO_ORIGINS` (normalized: lowercase, no trailing slash), POST only, header Content-Type, no credentials, Max-Age 600. A preflight or POST with a disallowed Origin → 403. No Origin → processed.
   - Never log `t` or the token (rejections are logged at DEBUG with the reason only). `main._SinLatidos` filters `/api/latido` out of `uvicorn.access`.
   - Tests: `BDFalsa.latido_*` reproduce the SQL rules with `bd.ahora`; `crear_token_energia` + autouse fixture `clave_de_energia` (`estado["error"]` simulates the key being unavailable).
-- **Static cache busting:** pages reference `/static/*.css|js?v=15`. Bump it on every release that changes static files.
+- **Static cache busting:** pages reference `/static/*.css|js?v=16`. Bump it on every release that changes static files.
 - **Explicit close (v9):** optional `"cierre"` in `/api/latido`, which must be a real bool (`type(x) is bool`; anything else → 400, `false` = normal heartbeat).
   - MiraStock: `db.cierre_mirastock` sets FinalSesion, `CierreExplicito = 1`, and `ExpiraEn = now` if it was in the future (the key is revoked). No 60 s rule, and never on an already closed session or one that is no longer alive (v15). Normal heartbeats add `COALESCE(CierreExplicito, 0) = 0`.
   - Energía: `_SQL_ENERGIA_INICIO` picks the latest row in the window (no closed filter) with `UPDLOCK, HOLDLOCK`. `UPDATE ... OUTPUT deleted.* INTO @previa` captures its prior state.
@@ -340,7 +349,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `/historial`: rows have `CierreExplicito` and resumen has `cerradasBoton`. The «Cierre» column (UI `textoCierre`, CSV `main._texto_cierre`) shows Botón > En curso > Inactividad (if FinalSesion) > Sin actividad > No medida (v14) > «—» (empty in the CSV); Denegado rows always «—».
 - **Business rules (API and UI):** At least one portal must be checked. Correo cannot be edited. `cliente` is required (`schemas.CLIENTES` = Entel, MiraGroup, Otro; case-insensitive, stored canonical) in `core.UsuariosEntel.Cliente` (v12); the UI suggests it from the email domain on create, adds the «Cliente» column and a filter. Since v12 there are no "self" rules (Portal3 is only data). The pydantic models use `validate_default=True`, so a missing field is validated too. Validation errors return 422 `{detail, errores: {campo: msg}}`, and the UI shows them next to each field.
 - **Pages:** static HTML read at startup; only `templates/error.html` gets `{{MENSAJE}}` (escaped). There is no Jinja. v12 adds `login.html`, `cambiar-contrasena.html` (+ `cambiar.js`) and `administradores.html` (+ `administradores.js`); the home has a third card «Centro de administración principal».
-  - v11 adds `estadisticas.html` (`/estadisticas`, uses `comun.js`). The home card now says «Estadísticas del Portal Corporativo MiraGroup» and links to `/estadisticas`; `/historial` has no card.
+  - v11 adds `estadisticas.html` (`/estadisticas`, uses `comun.js`; since v16 it is the cards home, see "Statistics pages"). The home card now says «Estadísticas del Portal Corporativo MiraGroup» and links to `/estadisticas`; `/historial` has no card.
   - The page routes share `main._pagina_protegida(request, html)` (see "Identity flow" step 7). `/login` with a valid session → 303 `/` (or `/cambiar-contrasena`).
   - `contactos.html` + `app.js` is the user admin, unchanged except the h1 («Centro Administración de contactos») and the «Inicio» link. `app.js` has its own API client and header code. The other pages use `comun.js` (`window.Mira`: `api`, `solicitar`, `el`, `toast`, `setOcupado`, `abrirModal`/`cerrarModal`, `sesion` (promise of `/api/me`), password policy, session-expired overlay with a link to `/login`, header with the admin's name, logout to `POST /api/auth/logout`).
   - The header markup is duplicated in each HTML (no templating). `.nav-inicio` holds the «Inicio» link outside `.sesion`; `#admin-nombre` shows the admin's name (email as title).
@@ -352,6 +361,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - Endpoints: `GET /api/historial` → `{filas, total, pagina, tamano, paginas}` (Fecha as `...Z`); `/api/historial/resumen` → `{total, usuariosUnicos, porPortal, denegados, porDia}`; `/api/historial/csv` → BOM + `;` + CRLF, Fecha `AAAA-MM-DD hh:mm:ss` UTC, cells starting with `= + - @ \t \r` get a `'`, filename `historial_accesos_AAAAMMDD.csv`, cap `TOPE_CSV_HISTORIAL` = 50,000 (more → header `X-Historial-Truncado`).
   - `historial.js`: default last 7 days; local days → UTC (`hasta` = next day 00:00 local); `tz_offset_min = -getTimezoneOffset()`. CSS bar chart (bar heights set via `element.style`, which the CSP allows); zero-filled up to 92 days, labels up to 31. The CSV is downloaded with fetch + blob, so 401/422 show in the UI and truncation shows a warning toast.
   - Tests: `BDFalsa.historial` + `agregar_acceso()` in `conftest.py`, and `llamadas_historial` records the filters received. `test_historial.py` also checks the SQL text and params of `db.py` with a fake cursor.
+- **Statistics pages (v16):**
+  - `/estadisticas` (`estadisticas.html` + `estadisticas-inicio.js`, no Chart.js): cards «General por portal» + one per portal from `/api/estadisticas/portales` (last 30 days), with `--color-portal` set via `style.setProperty` (CSSOM). Grid `.modulos-estadisticas`: 3 / 2 (≤ 900 px) / 1 (≤ 600 px) columns.
+  - `/estadisticas/general` (`estadisticas-general.html`, `<body data-vista="general">`) and `/estadisticas/portal/{slug}` (`estadisticas-portal.html`, `data-vista="portal"`), both through `_pagina_protegida` (which now takes `status_code`). A slug that does not match `_SLUG_VALIDO` (`[a-z0-9]+(-[a-z0-9]+)*`, ≤ `MAX_LARGO_SLUG` = 64) → the same page with 404; a valid unknown slug → 200 and the page shows `#portal-no-encontrado`.
+  - Slug: `main._slug_portal` (NFKD → ASCII, lowercase, non-alphanumeric runs → `-`, ≤ 60, empty → `portal`) and `_slugs_portales` (unique: alphabetical, then `-2`, `-3`…). Only `/api/estadisticas/portales` returns it (not the total, not the CSV).
+  - `estadisticas.js` picks the mode from `data-vista`: `general` → `montarTablaGeneral` + `montarGraficosGeneral` into `#general-cuerpo`; `portal` → `resolverPortal()` finds `p.slug === SLUG` in `datosPortales()`, sets h1/title and `montarPortal(portal)` (charts above the tabs in `#portal-cuerpo`; tabs lazy via `!panel.hidden`). Dates: `fijarRangoInicial` / `guardarRango` in `sessionStorage` (`CLAVE_RANGO` = `mira.estadisticas.rango.general` or `.portal.<slug>`), wrapped in try/catch.
+- **Charts (`/estadisticas`, v16):**
+  - `db.estadisticas_series(portal, desde, hasta, tz)`: `SELECT DISTINCT Portal` (only without portal) + one `GROUP BY GROUPING SETS ((Dia, Portal), (Dia))` over a derived table with `CAST(DATEADD(minute, ?, Fecha) AS date) AS Dia` (GROUP BY cannot repeat an expression with parameters). `main.api_estadisticas_series` fills the days with 0 (`_limites_series`: local day of `desde` to local day of `hasta − 1 µs`; without a date, first/last day with data) and returns 422 on `hasta` over `MAX_DIAS_SERIES` = 731.
+  - `db.estadisticas_distribucion(portal, desde, hasta, tz)`: three queries — `_CASE_CIERRE` (same priority as `_texto_cierre`; `db.TIPOS_CIERRE`, «Otro» = medible without data), `_CASE_DURACION` (`db.BORDES_DURACION` = 300/900/1800/3600 s; −1 sin actividad, −2 sin medir) and the 7 × 24 matrix with `DATEDIFF(day, '19000101', CAST(L AS date)) % 7` (Monday = 0, no `@@DATEFIRST`) over a derived `DATEADD(minute, ?, Fecha) AS L`. `portal` required (`_filtros_distribucion`, no correo).
+  - Frontend: `graficos.js` (`window.MiraGraficos`: theme from CSS vars into `Chart.defaults`, `colorPortal`, `crearPanel` with carga/vacío/error + `dibujar` that always `destroy()`s first, `tarjetas`, `mapaCalor` as a CSS grid with `element.style` intensity and `title` per cell). `estadisticas.js`: `datosPortales()` shares one `/portales` request per range version between the table, the general charts and the portal cards; `seccionGraficos` registers each chart section as a view (always visible since there is no accordion), inserted above the table / above the tabs. Top 10 comes from `/api/estadisticas/usuarios`.
+  - Tests: `BDFalsa.estadisticas_series/_distribucion` (weekday via `datetime.weekday()`), `tests/test_graficos.py` (endpoints, borders, weekday/tz, SQL via `CursorFalso`, static files, CSP, portal names only in the color map).
 - **Statistics (`/estadisticas`, v11, read-only on `core.vHistorialAccesos`):**
   - A session is a row with `Resultado = 'OK'`. Denied rows count neither as sessions nor as users.
   - `db._where_sesiones` reuses `_where_historial` with `resultado="OK"`.
@@ -391,7 +410,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - It swaps `app.db` and `mailer.enviar_bienvenida` for in-memory fakes and signs tokens with throwaway RSA keys.
   - The TestClient uses `https://testserver`. Cookies set manually need `domain="testserver.local"`.
 - JS syntax check: there is no Node on this machine. Use esprima from a scratch target dir: `pip install --target <dir> esprima==4.0.1`, then `esprima.parseScript(...)`.
-- Deploy a new version (always a new tag; v16 is next; bump `?v=` in the HTML, now `?v=15`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
+- Deploy a new version (always a new tag; v16 is next; bump `?v=` in the HTML, now `?v=16`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
 - Azure layout:
   - `ca-mira-admin` is in `RG-COPILOT-DEV`, East US, with 0.25 vCPU, 0.5 Gi and 0–1 replicas.
   - It reuses environment `managedEnvironment-rgscripth25prod-818f` and ACR `acrscripth25prod`, both in `rg-script-h25-prod`.
