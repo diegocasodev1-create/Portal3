@@ -572,8 +572,12 @@ _AGREGADOS_SESIONES = (
 )
 
 
-def _where_sesiones(portal: str | None, desde: datetime | None, hasta: datetime | None) -> tuple[str, list[Any]]:
-    return _where_historial(FiltrosHistorial(portal=portal, resultado="OK", desde=desde, hasta=hasta))
+def _where_sesiones(
+    portal: str | None, desde: datetime | None, hasta: datetime | None, correo: str | None = None
+) -> tuple[str, list[Any]]:
+    return _where_historial(
+        FiltrosHistorial(correo=correo, portal=portal, resultado="OK", desde=desde, hasta=hasta)
+    )
 
 
 def _agregados(sesiones: int, segundos: Any, promedio: Any, medidas: int, ultima: Any) -> dict[str, Any]:
@@ -624,11 +628,23 @@ def estadisticas_portales(desde: datetime | None, hasta: datetime | None) -> dic
     }
 
 
-def estadisticas_usuarios(
-    portal: str, desde: datetime | None, hasta: datetime | None, tope: int
-) -> tuple[list[dict[str, Any]], bool]:
-    """Una fila por usuario del portal, de más a menos horas. Devuelve (filas, truncado)."""
+def contar_usuarios_portal(portal: str, desde: datetime | None, hasta: datetime | None) -> int:
+    """Usuarios distintos con sesiones OK en el portal y el rango, sin filtro de correo."""
     where, params = _where_sesiones(portal, desde, hasta)
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT COUNT(DISTINCT Correo) FROM core.vHistorialAccesos{where}", *params)
+        return cur.fetchone()[0]
+
+
+def estadisticas_usuarios(
+    portal: str, desde: datetime | None, hasta: datetime | None, tope: int, correo: str | None = None
+) -> tuple[list[dict[str, Any]], bool]:
+    """Una fila por usuario del portal, de más a menos horas. Devuelve (filas, truncado).
+
+    `correo` filtra por «contiene» (sin distinguir mayúsculas; los comodines de LIKE se buscan literales).
+    """
+    where, params = _where_sesiones(portal, desde, hasta, correo)
     with _conexion() as conn:
         cur = conn.cursor()
         cur.execute(

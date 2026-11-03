@@ -22,9 +22,9 @@ def revocar_admin(bd):
 PAGINAS = {
     "/": ("Portal de administración", 'href="/estadisticas"'),
     "/contactos": ("Centro Administración de contactos", 'id="tabla-cuerpo"'),
-    "/historial": ("Logs control de ingresos", '<script src="/static/historial.js?v=13"'),
-    "/estadisticas": ("Estadísticas del Portal Corporativo MiraGroup", '<script src="/static/estadisticas.js?v=13"'),
-    "/administradores": ("Centro de administración principal", '<script src="/static/administradores.js?v=13"'),
+    "/historial": ("Logs control de ingresos", '<script src="/static/historial.js?v=14"'),
+    "/estadisticas": ("Estadísticas del Portal Corporativo MiraGroup", '<script src="/static/estadisticas.js?v=14"'),
+    "/administradores": ("Centro de administración principal", '<script src="/static/administradores.js?v=14"'),
 }
 
 
@@ -519,8 +519,8 @@ def test_db_resumen_sin_latidos_promedio_nulo(cursor_falso):
 @pytest.mark.parametrize("ruta", PAGINAS)
 def test_paginas_con_cache_busting_v13(cliente_admin, ruta):
     texto = cliente_admin.get(ruta).text
-    assert 'href="/static/styles.css?v=13"' in texto
-    assert '.js"' not in texto and "?v=12" not in texto  # todo archivo local lleva ?v=13
+    assert 'href="/static/styles.css?v=14"' in texto
+    assert '.js"' not in texto and "?v=13" not in texto  # todo archivo local lleva ?v=14
 
 
 def test_historial_columnas_e_indicadores_de_sesion(cliente_admin):

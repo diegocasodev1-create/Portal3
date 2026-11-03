@@ -376,8 +376,8 @@ class BDFalsa:
         }
 
     # Misma lógica que db.estadisticas_*: sesiones = filas OK del rango.
-    def _sesiones(self, portal, desde, hasta):
-        filtros = db.FiltrosHistorial(portal=portal, resultado="OK", desde=desde, hasta=hasta)
+    def _sesiones(self, portal, desde, hasta, correo=None):
+        filtros = db.FiltrosHistorial(correo=correo, portal=portal, resultado="OK", desde=desde, hasta=hasta)
         return [r for r in self._filtrar_historial(filtros) if r["Portal"] is not None]
 
     @staticmethod
@@ -408,10 +408,14 @@ class BDFalsa:
             "total": {"usuariosUnicos": unicos(filas), **self._agregados(filas)},
         }
 
-    def estadisticas_usuarios(self, portal, desde, hasta, tope):
-        self.llamadas_historial.append(("usuarios", portal, desde, hasta, tope))
+    def contar_usuarios_portal(self, portal, desde, hasta):
+        self.llamadas_historial.append(("contar_usuarios", portal, desde, hasta))
+        return len({r["Correo"] for r in self._sesiones(portal, desde, hasta) if r["Correo"] is not None})
+
+    def estadisticas_usuarios(self, portal, desde, hasta, tope, correo=None):
+        self.llamadas_historial.append(("usuarios", portal, desde, hasta, tope, correo))
         por_correo: dict = {}
-        for r in self._sesiones(portal, desde, hasta):
+        for r in self._sesiones(portal, desde, hasta, correo):
             por_correo.setdefault(r["Correo"], []).append(r)
         filas = [
             {"usuario": max((r["Usuario"] or "") for r in fs).strip(), "correo": correo, **self._agregados(fs)}
@@ -443,7 +447,7 @@ def bd(monkeypatch, iteraciones_rapidas):
         "listar_gerencias", "listar_usuarios", "obtener_usuario", "existe_correo",
         "crear_usuario", "actualizar_usuario", "eliminar_usuario", "marcar_invitacion_enviada",
         "listar_usuarios_con_acceso", "listar_historial", "resumen_historial",
-        "estadisticas_portales", "estadisticas_usuarios",
+        "estadisticas_portales", "estadisticas_usuarios", "contar_usuarios_portal",
         "latido_mirastock", "latido_energia", "cierre_mirastock", "cierre_energia",
         "latido_energia_llave", "cierre_energia_llave",
     ):

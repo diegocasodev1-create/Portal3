@@ -99,8 +99,8 @@ login). Única excepción: `/api/latido`.
 | `GET /api/historial/csv` | CSV con los mismos filtros más `tz_offset_min`, sin paginar (tope 50.000 filas) |
 | `GET /api/estadisticas/portales` | Totales por portal y total general (`desde`/`hasta`). → `{portales: [...], total}` (ver "Estadísticas") |
 | `GET /api/estadisticas/portales/csv` | El mismo cuadro en CSV, con fila «Total Portal Corporativo» (`tz_offset_min`) |
-| `GET /api/estadisticas/usuarios` | Una fila por usuario de un portal (`portal` obligatorio, `desde`/`hasta`). → `{portal, filas, total, truncado}` |
-| `GET /api/estadisticas/usuarios/csv` | La misma lista en CSV (`tz_offset_min`; tope 5.000 usuarios) |
+| `GET /api/estadisticas/usuarios` | Una fila por usuario de un portal (`portal` obligatorio, `desde`/`hasta`, `correo` opcional: contiene, v13). → `{portal, correo, filas, total, totalSinFiltro, truncado}` |
+| `GET /api/estadisticas/usuarios/csv` | La misma lista en CSV (`tz_offset_min`, `correo`; tope 5.000 usuarios) |
 
 Los errores siempre vienen como `{"detail": "mensaje en español"}`. `avisoCuenta: true` indica que la operación en
 SQL salió bien pero falló la cuenta de acceso; el `mensaje` trae el motivo y la interfaz lo muestra como aviso.
@@ -205,6 +205,10 @@ y tres niveles en acordeón (`<details>`):
 2. **Un bloque por portal**, generado desde la respuesta anterior (sin código por portal), con pestañas:
    - **Usuarios (general):** Usuario · Correo · Sesiones · Horas totales · Promedio · Última conexión, de más a
      menos horas (luego más sesiones, luego correo).
+     - v13: buscador «Correo» (contiene, sin distinguir mayúsculas) con «Buscar» o Enter, igual que en
+       «detallado». Contador «7 usuarios» o «2 de 7 usuarios»; sin coincidencias, «Sin usuarios que coincidan con
+       la búsqueda». «Exportar a Excel» exporta lo filtrado. El texto buscado se mantiene al cambiar las fechas.
+       Cada pestaña tiene su propio filtro, y el resumen del encabezado del portal no se filtra.
    - **Usuarios (detallado):** la tabla de `/historial` filtrada al portal, con correo, resultado, páginas y CSV.
    - Cada bloque y pestaña carga sus datos recién al abrirse.
 3. Los niveles 3 y 4 (funcionalidades y subfuncionalidades) se agregarán como otra entrada de `SUBVISTAS` en
@@ -219,11 +223,17 @@ GET /api/estadisticas/portales
  "total": {"usuariosUnicos": 10, "sesiones": 48, ...}}
 
 GET /api/estadisticas/usuarios?portal=Energía
-{"portal": "Energía", "filas": [{"usuario": "Ana Pérez", "correo": "ana@...", "sesiones": 4, ...}],
- "total": 6, "truncado": false}
+{"portal": "Energía", "correo": null, "filas": [{"usuario": "Ana Pérez", "correo": "ana@...", "sesiones": 4, ...}],
+ "total": 6, "totalSinFiltro": 6, "truncado": false}
+
+GET /api/estadisticas/usuarios?portal=Energía&correo=entel
+{"portal": "Energía", "correo": "entel", "filas": [...], "total": 2, "totalSinFiltro": 6, "truncado": false}
 ```
 
 Validación igual que el historial (422 `{detail, errores}`); en `/usuarios` falta `portal` → «Indica el portal.».
+`correo` (v13) usa el mismo `LIKE ? ESCAPE '\'` que `/api/historial` (`%`, `_`, `[` y `\` se buscan literales) y
+el mismo límite de 256 caracteres. `totalSinFiltro` = usuarios distintos del portal en el rango sin el filtro de
+correo (sin filtro ni truncado es igual a `total` y no hace otra consulta). `/portales` no acepta `correo`.
 
 **CSV de estadísticas:** mismo formato que el del historial. Columnas: Portal (o Usuario y Correo) · Usuarios
 únicos (solo portales) · Sesiones · Sesiones medidas · Horas totales (texto «52 h 10 min») · Minutos totales

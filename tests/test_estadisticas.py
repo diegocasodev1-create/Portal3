@@ -36,7 +36,7 @@ def test_pagina_estadisticas_estructura(cliente_admin):
     assert '<template id="tpl-portal">' in texto and 'role="tablist"' in texto
     assert 'id="e-desde"' in texto and 'id="e-hasta"' in texto
     assert 'href="/historial"' in texto
-    assert '<script src="/static/comun.js?v=13" defer></script>' in texto
+    assert '<script src="/static/comun.js?v=14" defer></script>' in texto
 
 
 def test_historial_enlaza_estadisticas(cliente_admin):
@@ -217,12 +217,14 @@ def test_usuarios_orden_por_horas_y_campos(cliente_admin, bd):
         "promedioSeg": 7200, "sesionesMedidas": 1, "ultimaConexion": "2026-10-21T15:30:00Z",
     }
     assert datos["filas"][2]["usuario"] == "" and datos["filas"][2]["segundosTotales"] is None
-    assert bd.llamadas_historial[-1] == ("usuarios", "Energía", None, None, main.TOPE_USUARIOS_ESTADISTICAS)
+    assert bd.llamadas_historial[-1] == ("usuarios", "Energía", None, None, main.TOPE_USUARIOS_ESTADISTICAS, None)
 
 
 def test_usuarios_portal_sin_datos(cliente_admin):
     datos = cliente_admin.get("/api/estadisticas/usuarios", params={"portal": "Inexistente"}).json()
-    assert datos == {"portal": "Inexistente", "filas": [], "total": 0, "truncado": False}
+    assert datos == {
+        "portal": "Inexistente", "correo": None, "filas": [], "total": 0, "totalSinFiltro": 0, "truncado": False,
+    }
 
 
 def test_usuarios_tope_avisa_truncado(cliente_admin, bd, monkeypatch):
@@ -230,10 +232,132 @@ def test_usuarios_tope_avisa_truncado(cliente_admin, bd, monkeypatch):
     for i in range(3):
         sesion(bd, f"u{i}@ejemplo.com", "MiraStock", i + 1)
     datos = cliente_admin.get("/api/estadisticas/usuarios", params={"portal": "MiraStock"}).json()
-    assert datos["truncado"] is True and datos["total"] == 2
+    assert datos["truncado"] is True and datos["total"] == 2 and datos["totalSinFiltro"] == 3
     resp = cliente_admin.get("/api/estadisticas/usuarios/csv", params={"portal": "MiraStock"})
     assert resp.headers["x-historial-truncado"] == "2"
     assert len(lineas_csv(resp)) == 1 + 2 + 1
+
+
+# ---------------------------------------------------------------------------
+# Buscador por correo en «Usuarios (general)» (v13)
+# ---------------------------------------------------------------------------
+
+PORTALES_BUSQUEDA = ["Energía", "MiraStock", "Bodega Norte"]
+
+
+def usuarios_para_buscar(bd, portal):
+    sesion(bd, "ana.perez@entel.pe", portal, 30, usuario="Ana Pérez")
+    sesion(bd, "Beto.Rojas@Entel.pe".lower(), portal, 20)
+    sesion(bd, "carla@miragroup.cl", portal, 10)
+    sesion(bd, "50%off@ejemplo.com", portal, 5)
+    sesion(bd, "500off@ejemplo.com", portal, 4)
+    sesion(bd, "a_b@ejemplo.com", portal, 3)
+    sesion(bd, "axb@ejemplo.com", portal, 2)
+    # No cuentan: otro portal y resultado denegado.
+    sesion(bd, "ana.otro@entel.pe", "Portal Ajeno", 99)
+    sesion(bd, "ana.denegada@entel.pe", portal, resultado="Denegado")
+
+
+def correos_json(cliente, portal, correo):
+    datos = cliente.get("/api/estadisticas/usuarios", params={"portal": portal, "correo": correo}).json()
+    return datos, [f["correo"] for f in datos["filas"]]
+
+
+def correos_csv(cliente, portal, correo):
+    resp = cliente.get("/api/estadisticas/usuarios/csv", params={"portal": portal, "correo": correo})
+    assert resp.status_code == 200
+    return [linea.split(";")[1] for linea in lineas_csv(resp)[1:-1]]
+
+
+@pytest.mark.parametrize("portal", PORTALES_BUSQUEDA)
+@pytest.mark.parametrize("correo, esperados", [
+    ("entel", ["ana.perez@entel.pe", "beto.rojas@entel.pe"]),
+    ("  ENTEL.PE ", ["ana.perez@entel.pe", "beto.rojas@entel.pe"]),
+    ("Carla", ["carla@miragroup.cl"]),
+    ("%", ["50%off@ejemplo.com"]),
+    ("50%", ["50%off@ejemplo.com"]),
+    ("_", ["a_b@ejemplo.com"]),
+    ("a_b", ["a_b@ejemplo.com"]),
+    ("nadie", []),
+])
+def test_usuarios_filtra_por_correo(cliente_admin, bd, portal, correo, esperados):
+    usuarios_para_buscar(bd, portal)
+    datos, correos = correos_json(cliente_admin, portal, correo)
+    assert correos == esperados
+    assert datos["total"] == len(esperados)
+    assert datos["totalSinFiltro"] == 7
+    assert datos["correo"] == correo.strip() and datos["truncado"] is False
+    assert correos_csv(cliente_admin, portal, correo) == esperados
+
+
+@pytest.mark.parametrize("portal", PORTALES_BUSQUEDA)
+@pytest.mark.parametrize("correo", [None, "", "   "])
+def test_usuarios_sin_filtro_no_cuenta_aparte(cliente_admin, bd, portal, correo):
+    usuarios_para_buscar(bd, portal)
+    params = {"portal": portal} if correo is None else {"portal": portal, "correo": correo}
+    datos = cliente_admin.get("/api/estadisticas/usuarios", params=params).json()
+    assert datos["total"] == datos["totalSinFiltro"] == 7 and datos["correo"] is None
+    assert bd.llamadas_historial[-1][-1] is None
+    assert not any(ll[0] == "contar_usuarios" for ll in bd.llamadas_historial)
+
+
+def test_usuarios_filtro_pasa_correo_y_rango_a_la_bd(cliente_admin, bd):
+    params = {"portal": "MiraStock", "correo": " Ana ", "desde": "2026-10-01T00:00:00Z"}
+    cliente_admin.get("/api/estadisticas/usuarios", params=params)
+    assert bd.llamadas_historial == [
+        ("usuarios", "MiraStock", datetime(2026, 10, 1), None, main.TOPE_USUARIOS_ESTADISTICAS, "Ana"),
+        ("contar_usuarios", "MiraStock", datetime(2026, 10, 1), None),
+    ]
+    cliente_admin.get("/api/estadisticas/usuarios/csv", params=params)
+    assert bd.llamadas_historial[-1] == (
+        "usuarios", "MiraStock", datetime(2026, 10, 1), None, main.TOPE_USUARIOS_ESTADISTICAS, "Ana",
+    )
+
+
+def test_usuarios_total_sin_filtro_respeta_el_rango(cliente_admin, bd):
+    sesion(bd, "ana@ejemplo.com", "Energía", 5, datetime(2026, 9, 1))
+    sesion(bd, "beto@ejemplo.com", "Energía", 5, FECHA)
+    sesion(bd, "bruno@ejemplo.com", "Energía", 5, FECHA)
+    params = {"portal": "Energía", "correo": "b", "desde": "2026-10-01T00:00:00Z"}
+    datos = cliente_admin.get("/api/estadisticas/usuarios", params=params).json()
+    assert datos["total"] == 2 and datos["totalSinFiltro"] == 2
+
+
+@pytest.mark.parametrize("ruta", ["/api/estadisticas/usuarios", "/api/estadisticas/usuarios/csv"])
+def test_usuarios_correo_demasiado_largo_422(cliente_admin, bd, ruta):
+    resp = cliente_admin.get(ruta, params={"portal": "Energía", "correo": "a" * 257})
+    assert resp.status_code == 422
+    assert resp.json()["errores"] == {"correo": "El correo no puede superar los 256 caracteres."}
+    assert bd.llamadas_historial == []
+    assert cliente_admin.get(ruta, params={"portal": "Energía", "correo": "a" * 256}).status_code == 200
+
+
+def test_usuarios_junta_errores_de_portal_correo_y_fechas(cliente_admin):
+    datos = cliente_admin.get("/api/estadisticas/usuarios", params={"correo": "a" * 257, "desde": "x"}).json()
+    assert list(datos["errores"]) == ["portal", "correo", "desde"]
+
+
+def test_portales_ignora_correo(cliente_admin, bd):
+    sesion(bd, "ana@ejemplo.com", "Energía", 5)
+    sesion(bd, "beto@ejemplo.com", "Energía", 5)
+    datos = cliente_admin.get("/api/estadisticas/portales", params={"correo": "ana"}).json()
+    # El resumen del portal no se filtra por correo.
+    assert datos["portales"][0]["usuariosUnicos"] == 2 and datos["total"]["sesiones"] == 2
+
+
+def test_usuarios_filtro_con_tope(cliente_admin, bd, monkeypatch):
+    monkeypatch.setattr(main, "TOPE_USUARIOS_ESTADISTICAS", 2)
+    for i in range(3):
+        sesion(bd, f"u{i}@ejemplo.com", "MiraStock", i + 1)
+    sesion(bd, "otro@x.com", "MiraStock", 1)
+    datos = cliente_admin.get("/api/estadisticas/usuarios", params={"portal": "MiraStock", "correo": "ejemplo"}).json()
+    assert datos["truncado"] is True and datos["total"] == 2 and datos["totalSinFiltro"] == 4
+
+
+def test_js_usuarios_general_tiene_buscador(cliente_admin):
+    texto = cliente_admin.get("/static/estadisticas.js").text
+    assert "Sin usuarios que coincidan con la búsqueda" in texto
+    assert texto.count('placeholder: "Contiene…"') == 2
 
 
 # ---------------------------------------------------------------------------
@@ -392,3 +516,23 @@ def test_db_estadisticas_usuarios(cursor_falso):
     assert "FROM core.vHistorialAccesos WHERE Portal = ? AND Resultado = ? AND Fecha < ? GROUP BY Correo" in sql
     assert sql.endswith("ORDER BY ISNULL(SUM(CAST(TiempoSesionSeg AS BIGINT)), 0) DESC, COUNT(*) DESC, Correo")
     assert params == (3, "Energía", "OK", datetime(2026, 11, 1))
+
+
+def test_db_estadisticas_usuarios_con_correo_escapa_like(cursor_falso):
+    cursor_falso["cursor"] = cur = CursorFalso(uno=[], todos=[[]])
+    assert db.estadisticas_usuarios("MiraStock", None, None, 10, " 50%_A[\\ ") == ([], False)
+    ((sql, params),) = cur.ejecutados
+    assert "WHERE Correo LIKE ? ESCAPE '\\' AND Portal = ? AND Resultado = ? GROUP BY Correo" in sql
+    assert params == (11, "%50\\%\\_a\\[\\\\%", "MiraStock", "OK")
+
+
+def test_db_contar_usuarios_portal(cursor_falso):
+    cursor_falso["cursor"] = cur = CursorFalso(uno=[(7,)], todos=[])
+    desde, hasta = datetime(2026, 10, 1), datetime(2026, 10, 31)
+    assert db.contar_usuarios_portal("Energía", desde, hasta) == 7
+    ((sql, params),) = cur.ejecutados
+    assert sql == (
+        "SELECT COUNT(DISTINCT Correo) FROM core.vHistorialAccesos"
+        " WHERE Portal = ? AND Resultado = ? AND Fecha >= ? AND Fecha < ?"
+    )
+    assert params == ("Energía", "OK", desde, hasta)

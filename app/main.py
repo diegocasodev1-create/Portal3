@@ -1028,13 +1028,16 @@ def _filtros_estadisticas(desde: str | None = None, hasta: str | None = None) ->
 
 
 def _filtros_estadisticas_portal(
-    portal: str | None = None, desde: str | None = None, hasta: str | None = None
+    portal: str | None = None, correo: str | None = None, desde: str | None = None, hasta: str | None = None
 ) -> db.FiltrosHistorial:
-    """Como `_filtros_estadisticas`, pero el portal es obligatorio. Junta todos los errores en un solo 422."""
+    """Como `_filtros_estadisticas`, pero el portal es obligatorio y acepta `correo` (contiene).
+
+    Junta todos los errores en un solo 422.
+    """
     errores: dict[str, str] = {}
     filtros = None
     try:
-        filtros = _filtros_historial(portal=portal, desde=desde, hasta=hasta)
+        filtros = _filtros_historial(correo=correo, portal=portal, desde=desde, hasta=hasta)
     except ErrorValidacion as e:
         errores = e.errores
     if not (portal and portal.strip()):
@@ -1110,12 +1113,19 @@ def api_estadisticas_usuarios(
     filtros: db.FiltrosHistorial = Depends(_filtros_estadisticas_portal),
 ):
     filas, truncado = db.estadisticas_usuarios(
-        filtros.portal, filtros.desde, filtros.hasta, TOPE_USUARIOS_ESTADISTICAS
+        filtros.portal, filtros.desde, filtros.hasta, TOPE_USUARIOS_ESTADISTICAS, filtros.correo
     )
+    # Sin filtro ni truncado, el total sin filtro es el mismo: no hace falta otra consulta.
+    if filtros.correo or truncado:
+        total_sin_filtro = db.contar_usuarios_portal(filtros.portal, filtros.desde, filtros.hasta)
+    else:
+        total_sin_filtro = len(filas)
     return {
         "portal": filtros.portal,
+        "correo": filtros.correo,
         "filas": [_estadistica_json(f) for f in filas],
         "total": len(filas),
+        "totalSinFiltro": total_sin_filtro,
         "truncado": truncado,
     }
 
@@ -1127,7 +1137,7 @@ def api_estadisticas_usuarios_csv(
     tz_offset_min: int = Query(0, ge=-840, le=840),
 ):
     filas, truncado = db.estadisticas_usuarios(
-        filtros.portal, filtros.desde, filtros.hasta, TOPE_USUARIOS_ESTADISTICAS
+        filtros.portal, filtros.desde, filtros.hasta, TOPE_USUARIOS_ESTADISTICAS, filtros.correo
     )
     contenido = [
         [_celda_csv(f["usuario"]), _celda_csv(f["correo"] or ""), *_celdas_sesiones(f, tz_offset_min)]

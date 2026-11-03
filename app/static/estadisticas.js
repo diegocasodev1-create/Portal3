@@ -113,7 +113,8 @@
       el("span", { class: "spinner", "aria-hidden": "true" }),
       el("span", { text: textoCarga }),
     ]);
-    const vacio = el("div", { class: "estado", hidden: true }, el("p", { text: textoVacio }));
+    const textoVacioNodo = el("p", { text: textoVacio });
+    const vacio = el("div", { class: "estado", hidden: true }, textoVacioNodo);
     const textoError = el("p", { text: "No se pudieron cargar los datos." });
     const botonReintentar = el("button", { type: "button", class: "btn btn-secundario", text: "Reintentar" });
     botonReintentar.addEventListener("click", reintentar);
@@ -126,12 +127,14 @@
       pie,
     ]);
 
+    // `mensaje`: texto del error o, con "vacio", texto del estado vacío (si falta, el de por defecto).
     function mostrar(cual, mensaje) {
       carga.hidden = cual !== "carga";
       vacio.hidden = cual !== "vacio";
       error.hidden = cual !== "error";
       tabla.hidden = cual !== "tabla";
-      if (mensaje) textoError.textContent = mensaje;
+      if (cual === "vacio") textoVacioNodo.textContent = mensaje || textoVacio;
+      else if (mensaje) textoError.textContent = mensaje;
     }
 
     return { nodos: [carga, vacio, error, tabla], cuerpo, pie, mostrar };
@@ -160,6 +163,15 @@
       el("td", { class: "td-num", "data-label": "Promedio por sesión", text: duracion(d.promedioSeg) }),
       el("td", { "data-label": "Última conexión", text: fechaLocal(d.ultimaConexion) }),
     ];
+  }
+
+  // «7 usuarios» o, con filtro, «2 de 7 usuarios» (el plural sigue al total).
+  function textoUsuarios(cantidad, de) {
+    const total = de === undefined ? cantidad : de;
+    const palabra = total === 1 ? "usuario" : "usuarios";
+    return de === undefined
+      ? `${numero.format(cantidad)} ${palabra}`
+      : `${numero.format(cantidad)} de ${numero.format(de)} ${palabra}`;
   }
 
   function textoMeta(d) {
@@ -240,23 +252,44 @@
   // Nivel 2: un bloque por portal, con sub-vistas en pestañas
   // -------------------------------------------------------------------------
 
-  // Usuarios (general): una fila por usuario, de más a menos horas.
+  // Usuarios (general): una fila por usuario, de más a menos horas, con buscador por correo.
+  // Mismo formulario que «Usuarios (detallado)», pero con su propio filtro.
   function vistaUsuarios(panel, portal, vista) {
-    const resumen = el("p", { class: "resumen", "aria-live": "polite" });
+    const idCorreo = nuevoId("correo");
+    const correo = el("input", { type: "search", id: idCorreo, maxlength: "256", placeholder: "Contiene…", autocomplete: "off" });
     const exportar = el("button", { type: "button", class: "btn btn-secundario btn-chico", text: "Exportar a Excel" });
+    const formulario = el("form", { class: "subvista-filtros", novalidate: true }, [
+      el("div", { class: "campo campo-buscar" }, [el("label", { for: idCorreo, text: "Correo" }), correo]),
+      el("div", { class: "barra-acciones" }, [
+        el("button", { type: "submit", class: "btn btn-primario btn-chico", text: "Buscar" }),
+        exportar,
+      ]),
+    ]);
+    const resumen = el("p", { class: "resumen", "aria-live": "polite" });
     const tabla = crearTabla({
       columnas: [{ titulo: "Usuario" }, { titulo: "Correo" }, ...COLUMNAS_SESIONES],
       textoCarga: "Cargando usuarios…",
       textoVacio: "No hay sesiones en el período seleccionado.",
       reintentar: () => vista.cargar(),
     });
-    panel.append(el("div", { class: "subvista-barra" }, [resumen, exportar]), ...tabla.nodos);
+    panel.append(formulario, resumen, ...tabla.nodos);
+
+    // Texto aplicado con «Buscar»: lo reusan el cambio de fechas, «Reintentar» y la exportación,
+    // así el archivo coincide con lo que se ve aunque el campo se haya editado sin buscar.
+    let buscado = "";
+    const filtros = (extra) => parametros({ portal, correo: buscado, ...extra });
+
     exportar.addEventListener("click", () => exportarCsv(
       exportar,
-      `/api/estadisticas/usuarios/csv?${parametros({ portal, tz_offset_min: tzOffsetMin() })}`,
+      `/api/estadisticas/usuarios/csv?${filtros({ tz_offset_min: tzOffsetMin() })}`,
       "estadisticas_usuarios.csv",
       "usuarios",
     ));
+    formulario.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      buscado = correo.value.trim();
+      vista.cargar();
+    });
 
     let pedido = 0;
     vista.cargar = async () => {
@@ -265,7 +298,7 @@
       tabla.mostrar("carga");
       let r;
       try {
-        r = await api("GET", `/api/estadisticas/usuarios?${parametros({ portal })}`);
+        r = await api("GET", `/api/estadisticas/usuarios?${filtros()}`);
       } catch (e) {
         if (actual !== pedido) return;
         tabla.mostrar("error", e.message);
@@ -278,11 +311,14 @@
         el("td", { class: "td-correo", "data-label": "Correo", text: u.correo || "—" }),
         ...celdasSesiones(u),
       ])));
+      const conFiltro = Boolean(r.correo);
       if (!r.total) {
-        tabla.mostrar("vacio");
+        // Con filtro y sin coincidencias se muestra el total igual, para saber que el portal sí tiene usuarios.
+        if (conFiltro && r.totalSinFiltro) resumen.textContent = textoUsuarios(0, r.totalSinFiltro);
+        tabla.mostrar("vacio", conFiltro ? "Sin usuarios que coincidan con la búsqueda" : "");
         return;
       }
-      resumen.textContent = `${numero.format(r.total)} ${r.total === 1 ? "usuario" : "usuarios"}`
+      resumen.textContent = (conFiltro ? textoUsuarios(r.total, r.totalSinFiltro) : textoUsuarios(r.totalSinFiltro))
         + (r.truncado ? ` (se muestran los primeros ${numero.format(r.total)})` : "");
       tabla.mostrar("tabla");
     };

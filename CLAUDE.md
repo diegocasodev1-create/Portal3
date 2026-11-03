@@ -8,7 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
 
-## Current status (as of 2026-10-30; v12 deployed that day)
+## Current status (as of 2026-11-03; v13 ready locally, NOT deployed)
+
+### v13 (2026-11-03): email search in «Usuarios (general)» of `/estadisticas` — NOT DEPLOYED
+- Asked for by the user. Details under "Statistics" in Architecture.
+- **677 tests pass** (new search tests in `tests/test_estadisticas.py`, parametrized over Energía, MiraStock and a new portal). JS checked with esprima. Static `?v=14` (bumped from 13; the code image is still v13).
+- Backend: `/api/estadisticas/usuarios` and `/csv` take optional `correo` (same validation and `LIKE` escaping as `/api/historial`, via `_filtros_estadisticas_portal` → `_filtros_historial`). The JSON adds `correo` (applied value or null) and `totalSinFiltro` (`db.contar_usuarios_portal`, only called when there is a filter or truncation; otherwise `len(filas)`). `/api/estadisticas/portales` ignores `correo`. No DB, flow or Power Pages changes.
+- UI: same form as «Usuarios (detallado)» (form on top, counter below; user's decision 2026-11-03). Counter «7 usuarios» / «2 de 7 usuarios»; no match → «Sin usuarios que coincidan con la búsqueda» (and «0 de 7 usuarios»). The applied term (set on «Buscar»/Enter) is reused by date changes, «Reintentar» and the CSV export. Each tab keeps its own filter; the portal header meta stays unfiltered.
+- Pending: the user's local review, then OK for build + deploy of v13.
 
 ### v12 (2026-10-30): own admin login + «Centro de administración principal» + Cliente — DEPLOYED
 - Asked for by the user. Details under "Identity flow", "Admin center" and "Business rules" in Architecture.
@@ -157,7 +164,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Deployment
 - URL: https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io
 - Revision mode `Single`: traffic follows the latest revision, and no older one is kept for rollback.
-- **Running: image v12, revision `ca-mira-admin--0000014`, with own login (always on), `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~22:28 UTC on 2026-10-30. `/health` is OK and startup was clean. It has 100% of the traffic; `--0000013` (v11) was deprovisioning right after the deploy. `ENERGIA_PORTAL_URL`, `LATIDO_ORIGINS` and `PORTAL_BASE_URL` are not set in Azure, so the code defaults apply. The next image is **v13** (static files are already at `?v=13`).
+- **Running: image v12, revision `ca-mira-admin--0000014`, with own login (always on), `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~22:28 UTC on 2026-10-30. `/health` is OK and startup was clean. It has 100% of the traffic; `--0000013` (v11) was deprovisioning right after the deploy. `ENERGIA_PORTAL_URL`, `LATIDO_ORIGINS` and `PORTAL_BASE_URL` are not set in Azure, so the code defaults apply. The next image is **v13** (static files are at `?v=14`).
 - Image history:
   - v3: auth off.
   - v4: External ID + PDF attachment.
@@ -205,7 +212,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Verified:
   - The portal public key loads (local and Azure).
   - `/health`, the no-session page, and the 401/404 checks pass.
-  - **634 tests pass** (v12, locally; `tests/test_sin_auth.py` no longer exists).
+  - **677 tests pass** (v13, locally; `tests/test_sin_auth.py` no longer exists).
   - v11 statistics match independent SQL on the production view (2026-10-30).
   - Code-only sign-in with a federated/mail account works.
   - Welcome emails arrive at other domains (per the user).
@@ -293,7 +300,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - CORS: custom `cors_latido` middleware for this route only. Origins from `LATIDO_ORIGINS` (normalized: lowercase, no trailing slash), POST only, header Content-Type, no credentials, Max-Age 600. A preflight or POST with a disallowed Origin → 403. No Origin → processed.
   - Never log `t` or the token (rejections are logged at DEBUG with the reason only). `main._SinLatidos` filters `/api/latido` out of `uvicorn.access`.
   - Tests: `BDFalsa.latido_*` reproduce the SQL rules with `bd.ahora`; `crear_token_energia` + autouse fixture `clave_de_energia` (`estado["error"]` simulates the key being unavailable).
-- **Static cache busting:** pages reference `/static/*.css|js?v=13`. Bump it on every release that changes static files.
+- **Static cache busting:** pages reference `/static/*.css|js?v=14`. Bump it on every release that changes static files.
 - **Explicit close (v9):** optional `"cierre"` in `/api/latido`, which must be a real bool (`type(x) is bool`; anything else → 400, `false` = normal heartbeat).
   - MiraStock: `db.cierre_mirastock` sets FinalSesion, `CierreExplicito = 1`, and `ExpiraEn = now` if it was in the future (the key is revoked). No 60 s rule, and never on an already closed session. Normal heartbeats add `COALESCE(CierreExplicito, 0) = 0`.
   - Energía: `_SQL_ENERGIA_INICIO` picks the latest row in the window (no closed filter) with `UPDLOCK, HOLDLOCK`. `UPDATE ... OUTPUT deleted.* INTO @previa` captures its prior state.
@@ -326,7 +333,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - Returns `(filas, truncado)`.
   - Endpoints (`admin` first):
     - `GET /api/estadisticas/portales` → `{portales: [{portal, usuariosUnicos, sesiones, segundosTotales, promedioSeg, sesionesMedidas, ultimaConexion}], total: {...}}`.
-    - `GET /api/estadisticas/usuarios?portal=` (required; missing → 422 «Indica el portal.», merged with date errors) → `{portal, filas: [{usuario, correo, ...}], total, truncado}`, capped by `TOPE_USUARIOS_ESTADISTICAS` = 5,000.
+    - `GET /api/estadisticas/usuarios?portal=` (required; missing → 422 «Indica el portal.», merged with correo/date errors) `&correo=` (optional, v13: contains, ≤ 256) → `{portal, correo, filas: [{usuario, correo, ...}], total, totalSinFiltro, truncado}`, capped by `TOPE_USUARIOS_ESTADISTICAS` = 5,000. The CSV also takes `correo`.
     - Both have a `/csv` with `tz_offset_min`.
     - `segundosTotales`/`promedioSeg` are `null` when nothing was measured.
   - CSV:
@@ -353,7 +360,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - It swaps `app.db` and `mailer.enviar_bienvenida` for in-memory fakes and signs tokens with throwaway RSA keys.
   - The TestClient uses `https://testserver`. Cookies set manually need `domain="testserver.local"`.
 - JS syntax check: there is no Node on this machine. Use esprima from a scratch target dir: `pip install --target <dir> esprima==4.0.1`, then `esprima.parseScript(...)`.
-- Deploy a new version (always a new tag; v13 is next; bump `?v=` in the HTML, now `?v=13`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
+- Deploy a new version (always a new tag; v13 is next; bump `?v=` in the HTML, now `?v=14`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
 - Azure layout:
   - `ca-mira-admin` is in `RG-COPILOT-DEV`, East US, with 0.25 vCPU, 0.5 Gi and 0–1 replicas.
   - It reuses environment `managedEnvironment-rgscripth25prod-818f` and ACR `acrscripth25prod`, both in `rg-script-h25-prod`.
