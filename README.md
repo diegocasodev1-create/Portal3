@@ -99,7 +99,7 @@ login). Única excepción: `/api/latido`.
 | `GET /api/historial/resumen` | Indicadores con los mismos filtros más `tz_offset_min`. → `{total, usuariosUnicos, porPortal, denegados, tiempoPromedioSeg, tiempoTotalSeg, enCurso, cerradasBoton, porDia}` |
 | `POST /api/latido` | **Público** (CORS para `LATIDO_ORIGINS`). Latido de sesión de Energía o MiraStock (ver "Latidos de sesión"). → 204 |
 | `GET /api/historial/csv` | CSV con los mismos filtros más `tz_offset_min`, sin paginar (tope 50.000 filas) |
-| `GET /api/estadisticas/portales` | Totales por portal y total general (`desde`/`hasta`). → `{portales: [...], total}` (ver "Estadísticas") |
+| `GET /api/estadisticas/portales` | Totales por portal y total general (`desde`/`hasta`). → `{portales: [...], total}`; desde la v16 cada portal trae `slug` (ver "Estadísticas") |
 | `GET /api/estadisticas/portales/csv` | El mismo cuadro en CSV, con fila «Total Portal Corporativo» (`tz_offset_min`) |
 | `GET /api/estadisticas/usuarios` | Una fila por usuario de un portal (`portal` obligatorio, `desde`/`hasta`, `correo` opcional: contiene, v13). → `{portal, correo, filas, total, totalSinFiltro, truncado}` |
 | `GET /api/estadisticas/usuarios/csv` | La misma lista en CSV (`tz_offset_min`, `correo`; tope 5.000 usuarios) |
@@ -253,7 +253,7 @@ Respuestas (fechas ISO UTC con `Z`; segundos enteros o `null` si no hay tiempo m
 
 ```json
 GET /api/estadisticas/portales
-{"portales": [{"portal": "Energía", "usuariosUnicos": 6, "sesiones": 29, "segundosTotales": 3589,
+{"portales": [{"portal": "Energía", "slug": "energia", "usuariosUnicos": 6, "sesiones": 29, "segundosTotales": 3589,
                "promedioSeg": 897, "sesionesMedidas": 4, "ultimaConexion": "2026-10-29T22:39:40Z",
                "sinActividad": 0}, ...],
  "total": {"usuariosUnicos": 10, "sesiones": 48, ...}}

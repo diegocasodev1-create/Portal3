@@ -186,16 +186,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - **MiraStock** is logged automatically through `core.SesionesAgente`. Nothing writes to `HistorialAccesos` for it.
   - `Fecha` and `Correo` are nullable in the view. The API returns `null` for them and the CSV leaves the cell empty.
 
+### Session of 2026-11-03 (closed): v13 → v16 in production
+- **v13** (inside image v14): email search («contiene») in «Usuarios (general)» of each portal; `totalSinFiltro` in `/api/estadisticas/usuarios`.
+- **v14** (`--0000015`): «Sin actividad» / «No medida» from the view's `Medible` / `SinActividad`; Cierre priority Botón → En curso → Inactividad → Sin actividad → No medida; `sinActividad` counts in statistics and CSVs; `TOKEN_AUDIENCE` removed from the Container App.
+- **v15** (`--0000016`): 10-min «alive» window for MiraStock and Energía-key heartbeats and closes (late ones are ignored); a MiraStock heartbeat renews `ExpiraEn` to now + 30 min without shortening it.
+- **v16** (`--0000017`): charts with Chart.js 4.4.7 (hosted, CSP unchanged), `/api/estadisticas/series` + `/distribucion`, `/estadisticas` as a cards home with `/estadisticas/general` and `/estadisticas/portal/<slug>` (own date filter per view, `slug` in `/portales`).
+- Commits from `41f3292` (v13) to the closing commit of this session, all pushed to `origin/main`. **866 tests pass.** Static files at `?v=16`; the next image is **v17**.
+
+### PENDIENTES (next session)
+1. **Verify v16 in Azure with the user's login:** `/estadisticas` (cards), `/estadisticas/general` and a portal view with real data (charts, tables, tabs, date filter per view), and the browser console free of CSP errors. Claude has not logged in to Azure.
+2. **Verify with a real session** (MiraStock and Energía) that the JS close after 30 min of inactivity leaves the session at its last activity with Cierre «Inactividad», and that a heartbeat outside the 10-min window is ignored (v15). Checking it in `/historial` or by SQL is a prod read: ask the user first.
+3. **Levels 3/4:** catalog of funcionalidades (level 3) and subfuncionalidades (level 4) per portal, when management defines it (and where the data will come from; nothing exists yet in the DB). It will be a new entry in `SUBVISTAS` in `estadisticas.js` plus its own endpoint.
+
 ### Next session: start here
+- Start with **PENDIENTES** above. The older items below are still open unless noted.
 - **v12 deployed on 2026-10-30.** Ask the user whether login, password change and `/administradores` work in Azure (Claude did not log in there). Each admin with the default password must change it within 72 h.
-- **Session closed on 2026-10-30** after the v12 deploy; commits `13e114b` (v12 code), `77f756e` (docs) and this closing commit were pushed to `origin/main`.
-- **v16 deployed on 2026-11-03** (`--0000017`). Ask the user whether `/estadisticas` (cards, general and portal views, charts) works in Azure after logging in, and whether the browser console stays free of CSP errors there.
+- **Session closed on 2026-10-30** after the v12 deploy; commits `13e114b` (v12 code), `77f756e` (docs) and its closing commit were pushed to `origin/main`.
+- **v16 deployed on 2026-11-03** (`--0000017`): see PENDIENTES 1.
 - **v15 deployed on 2026-11-03** (`--0000016`). With the user's OK (prod read), check in `/historial` that new MiraStock/Energía sessions no longer get inflated by late heartbeats, and that MiraStock users are not cut off from the agent after 30 min while active (key renewal).
 - **v13 + v14 deployed on 2026-11-03** (image v14, `--0000015`). Ask the user whether the email search in «Usuarios (general)» and the «Sin actividad» / «No medida» texts look right in Azure with real data. `TOKEN_AUDIENCE` is gone from the Container App.
 - `cracion_usuario.txt` (repo root) is the user's local file with the `sp_CrearAdministrador` EXECs (no passwords, per the user). It is in `.gitignore`; Claude must not open, delete or commit it. `body.json` is still untracked and undecided.
 - **v11 follow-ups:**
   - With the user's OK (prod read), open `/estadisticas` in Azure and check that `/api/estadisticas/portales` and `/usuarios` answer 200 with the same totals as the local check.
-  - Ask the user whether management wants levels 3/4 (funcionalidades / subfuncionalidades) and where that data will come from. Nothing for them exists yet in the DB.
+  - Levels 3/4: see PENDIENTES 3.
 0. **v8–v10 heartbeats:** ask the user whether the Power Pages JS (Energía Header with `t`, and MiraStock) is published. Then check in `/historial` that `FinalSesion` / «Tiempo de sesión» fill in for Energía and MiraStock, and that «Atrás» / «Cerrar sesión» shows «Botón» in «Cierre». A Log Analytics query for errors on `/api/latido` is possible: the app logs only errors there, never the key or token, and the access log excludes the route. Each query needs the user's OK.
 1. **Ask the user** whether the welcome emails for Id 55 and 56 arrived and whether code-only sign-in worked for them. Not verified by Claude.
 2. **Sync** (`python -m app.tools.sync_externalid`): there is no evidence it was ever run.
