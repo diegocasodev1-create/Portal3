@@ -8,15 +8,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
 
-## Current status (as of 2026-11-03; v13 + v14 deployed that day; v15 ready locally, NOT deployed)
+## Current status (as of 2026-11-03; v13 + v14 and v15 deployed that day)
 
-### v15 (2026-11-03): server-side protection against inflated sessions + MiraStock key renewal — NOT DEPLOYED
+### v15 (2026-11-03): server-side protection against inflated sessions + MiraStock key renewal — DEPLOYED
 - Asked for by the user. The MiraStock and Energía JS already close the whole session after 30 min without activity and send no heartbeats without real activity (the user's side); v15 protects against late heartbeats (PC waking up, old tab, cached JS).
 - **758 tests pass** (47 new `test_v15_*` in `tests/test_latido.py`; 4 old tests adjusted to live sessions). No static changes (`?v=15` stays). Only SQL in `db.py` changed; `main.py` and responses are unchanged (204 even when nothing is updated).
 - «Alive» = last activity ≤ 10 min ago (inclusive): `db._VIVA_MIRASTOCK` = `COALESCE(FinalSesion, CreadoEn) >= DATEADD(MINUTE, -10, SYSUTCDATETIME())`, `db._VIVA_ENERGIA` = `COALESCE(FinalSesion, Fecha) >= ...`. Appended to `_SQL_LATIDO_MIRASTOCK`, `_SQL_CIERRE_MIRASTOCK`, `_SQL_LATIDO_ENERGIA_LLAVE` and `_SQL_CIERRE_ENERGIA_LLAVE`. A late close does not mark «Botón», move FinalSesion or touch ExpiraEn. The Energía token mode (`latido_energia`/`cierre_energia`, 30-min window) is unchanged.
 - MiraStock heartbeat also renews the key in the same UPDATE: `ExpiraEn = CASE WHEN ExpiraEn > now+30 THEN ExpiraEn ELSE now+30 END` (never shortens; user's option A, 2026-11-03). A heartbeat skipped by the 60 s rule does not renew.
 - Data from the user: the flow `GenerarAccesoMiraStock` creates keys with `ExpiraEn = DATEADD(MINUTE, 30, SYSUTCDATETIME())`; `BDFalsa.agregar_sesion_agente` now defaults to +30 min.
-- Pending: the user's OK for build + deploy of image v15.
+- Commit `0da03b0`. Deployed on 2026-11-03 (~12:12 UTC) as image `mira-admin-app:v15`, revision `--0000016`.
+  - Checks: `/health` 200; `/login` 200; `POST /api/latido` with an empty body 400; startup clean. `--0000016` has 100% of the traffic; `--0000015` (v14) was deprovisioning.
+  - Not verified against the real DB: a real heartbeat inside/outside the 10-min window or a real key renewal (needs a live MiraStock/Energía session; checking it reads prod).
+- Effect at deploy time: open MiraStock sessions start renewing their key with their next heartbeat.
 
 ### v14 (2026-11-03): «Sin actividad» / «No medida» sessions — DEPLOYED
 - Asked for by the user. One image **v14** will carry v13 + v14 (the user's decision, 2026-11-03); v13 was never deployed on its own. One commit per version.
@@ -173,6 +176,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Next session: start here
 - **v12 deployed on 2026-10-30.** Ask the user whether login, password change and `/administradores` work in Azure (Claude did not log in there). Each admin with the default password must change it within 72 h.
 - **Session closed on 2026-10-30** after the v12 deploy; commits `13e114b` (v12 code), `77f756e` (docs) and this closing commit were pushed to `origin/main`.
+- **v15 deployed on 2026-11-03** (`--0000016`). With the user's OK (prod read), check in `/historial` that new MiraStock/Energía sessions no longer get inflated by late heartbeats, and that MiraStock users are not cut off from the agent after 30 min while active (key renewal).
 - **v13 + v14 deployed on 2026-11-03** (image v14, `--0000015`). Ask the user whether the email search in «Usuarios (general)» and the «Sin actividad» / «No medida» texts look right in Azure with real data. `TOKEN_AUDIENCE` is gone from the Container App.
 - `cracion_usuario.txt` (repo root) is the user's local file with the `sp_CrearAdministrador` EXECs (no passwords, per the user). It is in `.gitignore`; Claude must not open, delete or commit it. `body.json` is still untracked and undecided.
 - **v11 follow-ups:**
@@ -188,7 +192,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Deployment
 - URL: https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io
 - Revision mode `Single`: traffic follows the latest revision, and no older one is kept for rollback.
-- **Running: image v14 (v13 + v14 code), revision `ca-mira-admin--0000015`, with own login (always on), `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~06:21 UTC on 2026-11-03. `/health` is OK and startup was clean. It has 100% of the traffic; `--0000014` (v12) was deprovisioning right after the deploy. `ENERGIA_PORTAL_URL`, `LATIDO_ORIGINS`, `PORTAL_BASE_URL` and `TOKEN_AUDIENCE` are not set in Azure, so the code defaults apply. The next image is **v15** (bump static files to `?v=16` if they change).
+- **Running: image v15, revision `ca-mira-admin--0000016`, with own login (always on), `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~12:12 UTC on 2026-11-03. `/health` is OK and startup was clean. It has 100% of the traffic; `--0000015` (v14) was deprovisioning right after the deploy. `ENERGIA_PORTAL_URL`, `LATIDO_ORIGINS`, `PORTAL_BASE_URL` and `TOKEN_AUDIENCE` are not set in Azure, so the code defaults apply. The next image is **v16** (static files are still at `?v=15`; bump to `?v=16` if they change).
 - Image history:
   - v3: auth off.
   - v4: External ID + PDF attachment.
@@ -202,6 +206,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - v12: own admin login (`core.AdministradoresPortal`), `/administradores`, Cliente, password eye button, `?v=13` (`--0000014`).
   - v13: email search in «Usuarios (general)» (`?v=14`; never built as its own image).
   - v14: v13 + «Sin actividad» / «No medida», `sinActividad` counts, `?v=15`; `TOKEN_AUDIENCE` removed (`--0000015`).
+  - v15: 10-min «alive» window for MiraStock and Energía-key heartbeats/closes + MiraStock key renewal, no static changes (`--0000016`).
 - **az CLI** is logged in to both tenants (`e3112796-…` workforce/subscription, `cb938793-…` External ID), and the active one can switch. Before az commands on Azure resources, run `az account set --subscription 38b3f030-c7b5-4d38-822b-c533f88cd34a`.
 - Logs older than the current replica (it scales to 0): Log Analytics workspace `d8a192a1-91f6-4add-882c-d1396d044ba0`, table `ContainerAppConsoleLogs_CL`, via `az monitor log-analytics query`. The app logs the user Id and the External ID account id, never the email.
 
@@ -238,7 +243,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Verified:
   - The portal public key loads (local and Azure).
   - `/health`, the no-session page, and the 401/404 checks pass.
-  - **711 tests pass** (v14, locally; `tests/test_sin_auth.py` no longer exists).
+  - **758 tests pass** (v15, locally; `tests/test_sin_auth.py` no longer exists).
   - v11 statistics match independent SQL on the production view (2026-10-30).
   - Code-only sign-in with a federated/mail account works.
   - Welcome emails arrive at other domains (per the user).
@@ -386,7 +391,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - It swaps `app.db` and `mailer.enviar_bienvenida` for in-memory fakes and signs tokens with throwaway RSA keys.
   - The TestClient uses `https://testserver`. Cookies set manually need `domain="testserver.local"`.
 - JS syntax check: there is no Node on this machine. Use esprima from a scratch target dir: `pip install --target <dir> esprima==4.0.1`, then `esprima.parseScript(...)`.
-- Deploy a new version (always a new tag; v15 is next; bump `?v=` in the HTML, now `?v=15`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
+- Deploy a new version (always a new tag; v16 is next; bump `?v=` in the HTML, now `?v=15`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
 - Azure layout:
   - `ca-mira-admin` is in `RG-COPILOT-DEV`, East US, with 0.25 vCPU, 0.5 Gi and 0–1 replicas.
   - It reuses environment `managedEnvironment-rgscripth25prod-818f` and ACR `acrscripth25prod`, both in `rg-script-h25-prod`.
