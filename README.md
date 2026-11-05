@@ -587,7 +587,7 @@ Luego usa `SQL_USER=mira_admin_app` y esa clave en el Container App.
 | Suscripción | CreditosCopilot1 (`38b3f030-c7b5-4d38-822b-c533f88cd34a`) |
 | Container App | `ca-mira-admin` en `RG-COPILOT-DEV`, East US |
 | Environment (reutilizado) | `managedEnvironment-rgscripth25prod-818f` (`rg-script-h25-prod`, East US) |
-| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v16` (revisión `ca-mira-admin--0000017`, 2026-11-03). La v13 no tiene imagen propia: salió dentro de la v14. El próximo tag es `v17` (buscador por correo de los gráficos, `?v=17`; aún sin desplegar) |
+| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v17` (revisión `ca-mira-admin--0000018`, 2026-11-05: buscador por correo de los gráficos y mejora visual, `?v=17`). La v13 no tiene imagen propia: salió dentro de la v14. El próximo tag es `v18` |
 | Recursos | 0.25 vCPU, 0.5 GiB, réplicas mín. 0 / máx. 1, ingress externo solo HTTPS (HTTP redirige) |
 | Pull de la imagen | Usuario admin del ACR (guardado como secret del Container App). Con rol Contributor no se puede asignar `AcrPull` a una identidad administrada |
 | Secrets | `sql-password`, `session-secret`, `graph-client-secret` (secreto de la app "Portal Externo - Envio de correos"), `extid-client-secret` (secreto de la app de External ID) |
