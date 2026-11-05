@@ -44,7 +44,7 @@ def test_pagina(cliente_admin):
     resp = cliente_admin.get("/administradores")
     assert resp.status_code == 200
     for marca in ('id="lista-admins"', 'id="modal-verificar"', 'id="modal-ficha"', 'id="reglas"',
-                  '<script src="/static/comun.js?v=17"', '<script src="/static/administradores.js?v=17"'):
+                  '<script src="/static/comun.js?v=18"', '<script src="/static/administradores.js?v=18"'):
         assert marca in resp.text
 
 

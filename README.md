@@ -328,6 +328,17 @@ GET /api/estadisticas/distribucion?portal=Energía&desde&hasta&tz_offset_min
 - Los dos validan igual que el resto de las estadísticas (422 `{detail, errores}`; 401 sin sesión, antes de validar).
 - Validado contra producción el 2026-11-03 (solo lectura): los totales de los dos SQL coinciden con `/portales`.
 
+### Logo y cards del menú (v18)
+
+- **Logo:** `app/static/img/logo-miragroup.png` (240 px) y `logo-miragroup@2x.png` (480 px), PNG transparentes
+  generados desde `app/media/logo2.jpg` (el fondo blanco y la sombra pasan a transparencia; el logo conserva sus
+  colores). Va en el encabezado de todas las páginas, en el ingreso y en «Tu sesión venció», con `srcset` para
+  pantallas de alta densidad y un halo claro (`drop-shadow`) para que la parte azul marino se lea sobre el fondo
+  oscuro. Alternativa preparada: la clase `logo-placa` (placa clara redondeada). `app/media/` no se sirve ni se sube
+  al repo.
+- **Cards del menú de inicio** (`card-menu`, solo las 3 de `/`): gris metálico tipo acero cepillado con brillo en el
+  borde superior; el hover sigue igual (sube, brillo cian y sombra).
+
 ### Buscador por correo de los gráficos (v17)
 
 Solo en la vista de cada portal (`/estadisticas/portal/<slug>`); la vista general no cambia.
@@ -512,7 +523,7 @@ app/static/       inicio.html (/), contactos.html + app.js (/contactos), histori
                   estadisticas.html + estadisticas.js (/estadisticas), administradores.html + administradores.js,
                   login.html + login.js, cambiar-contrasena.html + cambiar.js,
                   comun.js (API, avisos, modales, encabezado, política de contraseñas, formatos y descarga de CSV),
-                  styles.css, logoMG.png
+                  styles.css, img/logo-miragroup.png + @2x (logo, v18)
 app/templates/    error.html (página de error, p. ej. 503 si la BD no responde)
 tests/            pytest (BD, Graph y External ID simulados)
 ```

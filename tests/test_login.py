@@ -326,7 +326,7 @@ def test_puede_ver_su_nombre_y_la_pagina_de_cambio(cliente_por_defecto):
     assert cliente_por_defecto.get("/api/me").json()["debeCambiarContrasena"] is True
     resp = cliente_por_defecto.get("/cambiar-contrasena")
     assert resp.status_code == 200
-    assert 'id="form-cambio"' in resp.text and '<script src="/static/cambiar.js?v=17"' in resp.text
+    assert 'id="form-cambio"' in resp.text and '<script src="/static/cambiar.js?v=18"' in resp.text
 
 
 def cambiar(cliente, actual=POR_DEFECTO, nueva=NUEVA, confirmacion=None):

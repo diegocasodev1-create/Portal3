@@ -19,6 +19,12 @@
   --card-fondo: linear-gradient(155deg, rgba(18, 42, 78, 0.88) 0%, rgba(9, 22, 46, 0.82) 55%, rgba(5, 13, 30, 0.86) 100%);
   --card-sombra: 0 10px 28px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   --transicion: 0.25s ease;
+  /* v18: superficies claras (encabezado blanco y login plateado). Contrastes ≥ 4.5:1 sobre blanco y sobre #c9d0d9. */
+  --claro-titulo: #0b2545;      /* azul marino: 15.6:1 en blanco, 9.9:1 en el gris más oscuro del plateado */
+  --claro-texto: #374151;       /* gris oscuro: 10.3:1 en blanco, 6.6:1 en plateado */
+  --claro-borde: #8a97a8;
+  --claro-foco: #0b7fae;        /* cian oscuro para bordes y focos sobre claro: 4.6:1 en blanco */
+  --claro-enlace: #12386b;      /* azul oscuro: 11.8:1 en blanco, 7.5:1 en plateado */
   --fuente: "Exo 2", "Segoe UI", system-ui, sans-serif;
 }
 
@@ -131,14 +137,53 @@ a { color: var(--acento-suave); }
 
 /* ---------- Encabezado ---------- */
 
+/* v18: encabezado blanco, fijo arriba (por encima del contenido y los gráficos; debajo de modales,
+   pantalla de bloqueo y avisos: z-index 50/80/90) y con sombra suave que se intensifica al bajar. */
 .encabezado {
+  position: sticky; top: 0; z-index: 40;
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--borde);
-  background: rgba(3, 8, 20, 0.6);
+  padding: 14px 24px;
+  color: var(--claro-titulo);
+  background: #ffffff;
+  border-bottom: 1px solid #d6dde6;
+  box-shadow: 0 2px 10px rgba(3, 8, 20, 0.28);
 }
+/* Sombra más marcada al hacer scroll, solo con CSS (navegadores con animaciones ligadas al scroll). */
+@supports (animation-timeline: scroll()) {
+  .encabezado { animation: sombra-encabezado linear both; animation-timeline: scroll(root); animation-range: 0 120px; }
+}
+@keyframes sombra-encabezado {
+  from { box-shadow: 0 2px 10px rgba(3, 8, 20, 0.28); }
+  to { box-shadow: 0 6px 22px rgba(3, 8, 20, 0.6); }
+}
+.encabezado h1 { color: var(--claro-titulo); }
+.encabezado .logo { filter: none; }  /* sobre blanco el logo va con sus colores, sin halo */
+.encabezado .admin-nombre { color: var(--claro-texto); }
+/* «← Inicio», «← Estadísticas» y «Cerrar sesión»: azules, texto blanco en negrita (5.97:1; hover 5.2:1). */
+.encabezado .btn-fantasma {
+  min-width: 160px; padding: 8px 28px;
+  color: #ffffff; font-weight: 700; background: #0b5cd6; border-color: #0b5cd6;
+  box-shadow: 0 2px 6px rgba(11, 92, 214, 0.25);
+}
+.encabezado .btn-fantasma:hover:not(:disabled), .encabezado .btn-fantasma:focus-visible {
+  color: #ffffff; background: #1767de; border-color: var(--acento);
+  box-shadow: 0 0 0 1px var(--acento), 0 0 16px rgba(41, 184, 236, 0.55), 0 6px 16px rgba(3, 8, 20, 0.25);
+}
+.encabezado .btn:focus-visible, .encabezado a:focus-visible { outline: 2px solid #083f94; outline-offset: 3px; }
 .marca { display: flex; align-items: center; gap: 16px; min-width: 0; }
-.logo { height: 40px; width: auto; display: block; }
+/* v18: logo de MiraGroup (PNG transparente, 240 px + @2x). Halo claro para que «Mira», el anillo y la «M»
+   (azul marino con contorno negro) se separen del fondo oscuro. */
+.logo {
+  display: block; height: 40px; width: auto; max-width: 100%;
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.55)) drop-shadow(0 0 6px rgba(190, 225, 255, 0.35));
+}
+/* Alternativa: placa clara redondeada detrás del logo (sin halo). Para usarla en todas las páginas, cambia
+   class="logo" por class="logo logo-placa" en el HTML (ver CLAUDE.md). */
+.logo.logo-placa {
+  filter: none; padding: 4px 10px; border-radius: 10px;
+  background: linear-gradient(180deg, #f6f8fb 0%, #e2e8f0 100%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5), 0 4px 14px rgba(0, 0, 0, 0.35);
+}
 .sesion { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .admin-nombre { color: var(--texto-2); font-size: 0.9rem; margin-right: 6px; overflow-wrap: anywhere; }
 .nav-inicio { display: flex; flex-wrap: wrap; gap: 10px; margin-right: auto; }
@@ -245,7 +290,7 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
 
 .pagina-simple { display: flex; align-items: center; justify-content: center; padding: 16px; }
 .card-aviso { width: 100%; max-width: 480px; padding: 36px 32px; text-align: center; }
-.card-aviso .logo { margin: 0 auto 20px; height: 48px; }
+.card-aviso .logo { margin: 0 auto 20px; height: 52px; }
 .card-aviso h1, .card-aviso h2 { margin-bottom: 12px; font-size: 1.3rem; }
 .card-aviso p { color: var(--texto-2); margin-bottom: 24px; }
 
@@ -315,6 +360,29 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
 .modulo-ir { color: var(--acento-suave); font-weight: 600; font-size: 0.9rem; }
 .modulo-flecha { display: inline-block; transition: transform var(--transicion); }
 .card-modulo:hover .modulo-flecha, .card-modulo:focus-visible .modulo-flecha { transform: translateX(5px); }
+
+/* v18: las 3 cards del menú de inicio en gris metálico (acero cepillado), para que se despeguen del fondo.
+   Líneas finas horizontales («cepillado») + degradado de grises + brillo en el borde superior. */
+.card-menu {
+  --brillo: #9fe3ff;
+  --brillo-suave: rgba(41, 184, 236, 0.4);
+  border-color: rgba(200, 210, 224, 0.28);
+  background:
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0 1px, rgba(255, 255, 255, 0) 1px 3px),
+    linear-gradient(165deg, #4b5361 0%, #363d48 38%, #2a3039 70%, #1f242c 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 12px 30px rgba(0, 0, 0, 0.5);
+}
+.card-menu .modulo-texto { color: #d0d7e1; }
+.card-menu .modulo-ir { color: #a8e6ff; }
+.card-menu .modulo-icono { color: #6fd3ff; border-color: rgba(159, 227, 255, 0.4); background-color: rgba(10, 18, 30, 0.35); }
+.card-menu:hover, .card-menu:focus-visible {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34), inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 0 0 1px var(--brillo), 0 0 26px var(--brillo-suave), 0 22px 46px rgba(0, 0, 0, 0.6);
+}
+.card-menu:hover .modulo-icono, .card-menu:focus-visible .modulo-icono { background-color: rgba(10, 18, 30, 0.5); }
 
 /* Sin movimiento: solo cambian colores, brillo y sombra. */
 @media (prefers-reduced-motion: reduce) {
@@ -493,13 +561,48 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
 /* ---------- Ingreso y cambio de contraseña ---------- */
 
 .card-ingreso { max-width: 420px; text-align: left; }
-.card-ingreso .logo { margin: 0 auto 20px; }
+.card-ingreso .logo { margin: 0 auto 22px; height: 64px; }
 .card-ingreso h1, .card-ingreso > p { text-align: center; }
 .form-ingreso { margin-top: 8px; }
 .form-ingreso .error-general { margin-bottom: 14px; }
 .btn-ancho { width: 100%; margin-top: 6px; }
 .nota { color: var(--texto-2); font-size: 0.85rem; }
 .card-ingreso .nota { margin: 18px 0 0; text-align: center; }
+
+/* v18: recuadro del login como una barra de acero pulido: degradado vertical con un brillo especular casi blanco
+   hacia el 17 % y grises medios hacia abajo, cepillado fino y volumen (brillo interior arriba, sombra abajo).
+   El fondo de la página sigue oscuro. Textos oscurecidos para ≥ 4.5:1 incluso sobre el gris más oscuro (#8b929b). */
+.card-plata {
+  --plata-titulo: #081a33;  /* 5.5:1 sobre #8b929b, 16.1:1 sobre el brillo */
+  --plata-texto: #151c27;   /* 5.4:1 */
+  --plata-label: #0f1520;   /* 5.8:1 */
+  --plata-enlace: #0a1f45;  /* 5.2:1 */
+  color: var(--plata-titulo);
+  border: 1px solid #7d838b;
+  background:
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0 1px, rgba(0, 0, 0, 0.025) 1px 2px, rgba(255, 255, 255, 0) 2px 4px),
+    linear-gradient(180deg, #8e939a 0%, #c9cdd3 8%, #f4f6f8 17%, #e8ebee 24%, #d9dde2 38%, #b8bec6 62%, #a3aab3 82%, #8b929b 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85), inset 0 2px 6px rgba(255, 255, 255, 0.25),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.22), inset 0 -10px 18px rgba(0, 0, 0, 0.12),
+    0 4px 0 rgba(0, 0, 0, 0.25), 0 24px 56px rgba(0, 0, 0, 0.65);
+}
+.card-plata .logo { filter: none; }
+.card-plata h1 { color: var(--plata-titulo); }
+.card-plata > p { color: var(--plata-texto); }
+.card-plata .nota { color: var(--plata-enlace); font-weight: 600; }
+.card-plata .campo label { color: var(--plata-label); font-weight: 600; }
+.card-plata input[type="email"], .card-plata input[type="password"], .card-plata input[type="text"] {
+  color: #0b1a2e; background: #ffffff; border-color: var(--claro-borde);
+}
+.card-plata input::placeholder { color: #5b6573; }
+.card-plata input:focus { border-color: var(--claro-foco); box-shadow: 0 0 0 3px rgba(41, 184, 236, 0.35); }
+.card-plata .btn-ojo { color: var(--claro-texto); }
+.card-plata .btn-ojo:hover { color: #111827; background: rgba(3, 8, 20, 0.07); }
+.card-plata .btn-ojo:focus-visible { outline-color: var(--claro-foco); }
+.card-plata .btn:focus-visible { outline-color: var(--claro-foco); }
+.card-plata .error-general { color: #8f1424; background: #fde8ea; border-color: rgba(185, 28, 28, 0.55); }  /* 7.8:1 */
+.card-plata .error-campo { color: #a3162a; }
 
 .card-formulario { max-width: 520px; margin: 4vh auto 0; padding: 26px 28px; }
 .card-formulario h2 { margin-bottom: 12px; }
@@ -599,6 +702,12 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
 }
 
 @media (max-width: 480px) {
+  .encabezado .logo { height: 32px; }
+  .encabezado { gap: 8px 10px; padding: 10px 12px; }
+  .encabezado h1 { font-size: 1.05rem; }
+  .encabezado .btn { min-height: 34px; padding: 4px 14px; font-size: 0.88rem; }
+  .encabezado .btn-fantasma { min-width: 120px; padding: 4px 16px; }
+  .card-ingreso .logo { height: 52px; }
   .sesion { width: 100%; }
   .indicadores { grid-template-columns: 1fr 1fr; gap: 12px; }
   .indicador { padding: 12px 14px; }

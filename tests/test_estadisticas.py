@@ -35,7 +35,7 @@ def test_pagina_estadisticas_estructura(cliente_admin):
     texto = cliente_admin.get("/estadisticas").text
     assert 'id="cards-estadisticas"' in texto and "<details" not in texto
     assert 'href="/historial"' in texto and 'href="/">← Inicio</a>' in texto
-    assert '<script src="/static/comun.js?v=17" defer></script>' in texto
+    assert '<script src="/static/comun.js?v=18" defer></script>' in texto
 
 
 def test_historial_enlaza_estadisticas(cliente_admin):

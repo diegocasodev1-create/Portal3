@@ -7,3 +7,6 @@ __pycache__/
 
 # Notas locales del usuario (EXEC de sp_CrearAdministrador); nunca al repo
 cracion_usuario.txt
+
+# Originales del logo (v18): se sirve solo la copia optimizada de app/static/img/
+app/media/

@@ -19,3 +19,6 @@ README.md
 tests/
 pytest.ini
 requirements-dev.txt
+
+# Originales del logo (v18)
+app/media/

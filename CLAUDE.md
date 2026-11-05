@@ -8,7 +8,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
 
-## Current status (as of 2026-11-05; v17 deployed that day)
+## Current status (as of 2026-11-05; v17 deployed that day; v18 built locally, not committed or deployed)
+
+### v18 (2026-11-05): MiraGroup logo + metallic grey menu cards — LOCAL, NOT DEPLOYED
+- Asked for by the user. **938 tests pass** (new `tests/test_logo.py`). Static `?v=18` (images too).
+- **Logo:** the user put two originals in `app/media/` (`logo1.jpg`, `logo2.jpg`, 2752×1536). Neither is really transparent: `logo1` has a checkerboard painted into the JPG, `logo2` a plain white background. User's choice: `logo2.jpg`.
+  - Converted with Pillow (installed only in the scratchpad, not in `requirements`): logo pixels (colour or dark outline) stay opaque with their original colours; only the white background and the grey shadow become transparent (a plain «colour to alpha» washed out the light cyan). Cropped to the content and saved as `app/static/img/logo-miragroup.png` (240×73, ~22 KB) and `logo-miragroup@2x.png` (480×146, ~73 KB), RGBA.
+  - `app/media/` is not served (only `/static` is mounted) and is in `.gitignore` and `.dockerignore`. `app/static/logoMG.png` (the old «MG» block) was deleted.
+  - Every page (all `app/static/*.html` + `templates/error.html`): `<img src="/static/img/logo-miragroup.png?v=18" srcset="... 1x, ...@2x.png?v=18 2x" width="240" height="73" alt="MiraGroup" class="logo">` in the header, the «Tu sesión venció» card and the login (above «Portal de administración»).
+  - CSS: `.logo` height 40 px (32 px in the header at ≤ 480 px), login 64 px (52 px at ≤ 480 px), session card 52 px. Light halo `filter: drop-shadow(...)` (user's choice) so the navy «Mira», ring and «M» stand out from the dark background.
+  - **Alternative ready:** `.logo.logo-placa` = light rounded plate, no halo. To switch every page: replace `class="logo">` with `class="logo logo-placa">` in `app/static/*.html` and `app/templates/error.html`, and update `LOGO` in `tests/test_logo.py`.
+- **Menu cards:** only the 3 cards of `inicio.html` get `card-menu`: brushed steel (fine `repeating-linear-gradient` lines + grey gradient `#4b5361` → `#1f242c`), top highlight (`inset 0 1px 0`), text `#d0d7e1` (≈ 5.3:1 at the lightest corner), «Entrar →» `#a8e6ff`, icon `#6fd3ff`. Hover/focus keep the v17 behaviour (rise, glow `#9fe3ff`, bigger shadow). The statistics and admin cards are unchanged.
+- **Adjustment after the local review (same v18, 2026-11-05):** **940 tests pass** (2 more in `tests/test_logo.py`).
+  - **Header (every page with `.encabezado`):** white, `position: sticky; top: 0; z-index: 40` (above content and charts, below `.modal-fondo` 50, `.bloqueo` 80 and `.toasts` 90). Soft shadow underneath that grows over the first 120 px of scroll via a CSS scroll-driven animation (`animation-timeline: scroll(root)` inside `@supports`; other browsers keep the soft shadow). Logo without halo (`.encabezado .logo { filter: none; }`). Title `--claro-titulo` `#0b2545`, admin name `--claro-texto` `#374151`, `btn-fantasma` with dark text and border `--claro-borde` and a cyan glow on hover/focus; focus outline `--claro-foco` `#0b7fae`. At ≤ 480 px it stays sticky but more compact (smaller padding, title 1.05 rem, smaller buttons).
+  - **Login:** `<main class="card card-aviso card-ingreso card-plata">`: silver/aluminium gradient (`#f5f7fa` → `#c9d0d9`) with fine brushed lines and a top highlight; the page background stays dark. Logo without halo; title navy, text dark grey, labels `#1f2937`, inputs white with grey border and dark text, eye button dark grey, «¿Olvidaste tu contraseña?» note `--claro-enlace` `#12386b`, error box dark red. «Ingresar» stays cyan. Only the login uses `card-plata`.
+  - Contrast of every new text pair is ≥ 4.5:1 (lowest: the focus outline `#0b7fae` on white, 4.5:1; placeholder 5.9:1; error 5.6:1).
+- **Second adjustment (same v18, 2026-11-05):**
+  - **Login = polished steel bar:** vertical gradient `#8e939a` (top edge) → `#f4f6f8` specular band at ~17 % → `#d9dde2` → `#b8bec6` → `#a3aab3` → `#8b929b` (bottom edge), subtle brushed lines, border `#7d838b`, inner top highlight and inner/outer shadows below for volume. Texts darkened so every one is ≥ 4.5:1 against every stop, including `#8b929b`: title `--plata-titulo` `#081a33` (5.5:1 minimum), text `--plata-texto` `#151c27` (5.4:1), labels `--plata-label` `#0f1520` (5.8:1), note `--plata-enlace` `#0a1f45` (5.2:1); the error box has a solid `#fde8ea` background with `#8f1424` text (7.8:1). Inputs stay white with dark text.
+  - **Header buttons** (`.encabezado .btn-fantasma`: «← Inicio», «← Estadísticas», «Cerrar sesión»): blue `#0b5cd6` background and border, bold white text (5.97:1), `min-width: 160px`, padding 8 × 28 px. Hover/focus: `#1767de` (5.2:1) with a cyan border glow and a soft shadow; focus outline `#083f94` (9.8:1 on white), 3 px offset. At ≤ 480 px: `min-width: 120px`, padding 4 × 16 px.
+- The halo now only applies where the logo sits on the dark background (the «Tu sesión venció» card and `error.html`); the `logo-placa` alternative is still available.
+- Pending: the user's local review, then commit, build and deploy of image v18 (each with the user's OK).
+
 
 ### v17 (2026-11-05): email search for the charts of each portal + visual refresh — DEPLOYED
 - Asked for by the user. Only `/estadisticas/portal/<slug>`; the general view and the tabs «Usuarios (general)» / «Usuarios (detallado)» are unchanged (they keep their own searches). No DB, flow or Power Pages changes.
@@ -319,7 +339,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - Claude's shell is non-interactive: `Read-Host` cannot prompt. To enter a secret, write a script to the scratchpad that reads it with `Read-Host -AsSecureString`, discards the az output and prints only success or failure. The user runs it in their own PowerShell window.
 - Never print secrets from `.env`, ACR credentials or Container App secrets. Show only secret *names*. Scripts that need secrets read them from `.env` inside the script and keep them out of the output.
 - Do not create or modify Power Pages files. The user handles the portal.
-- The frontend uses no frameworks or external JS/CSS libraries. The only external resource is the Google Fonts Exo 2 font.
+- The frontend uses no frameworks or external JS/CSS libraries. The only external resource is the Google Fonts Exo 2 font. The logo is `app/static/img/logo-miragroup.png` (+ `@2x`); `app/media/` holds the originals and is never served or committed.
 
 ## Architecture (cross-cutting points)
 
@@ -377,7 +397,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - CORS: custom `cors_latido` middleware for this route only. Origins from `LATIDO_ORIGINS` (normalized: lowercase, no trailing slash), POST only, header Content-Type, no credentials, Max-Age 600. A preflight or POST with a disallowed Origin → 403. No Origin → processed.
   - Never log `t` or the token (rejections are logged at DEBUG with the reason only). `main._SinLatidos` filters `/api/latido` out of `uvicorn.access`.
   - Tests: `BDFalsa.latido_*` reproduce the SQL rules with `bd.ahora`; `crear_token_energia` + autouse fixture `clave_de_energia` (`estado["error"]` simulates the key being unavailable).
-- **Static cache busting:** pages reference `/static/*.css|js?v=17`. Bump it on every release that changes static files.
+- **Static cache busting:** pages reference `/static/*.css|js?v=18` (and the logo images, v18). Bump it on every release that changes static files.
 - **Explicit close (v9):** optional `"cierre"` in `/api/latido`, which must be a real bool (`type(x) is bool`; anything else → 400, `false` = normal heartbeat).
   - MiraStock: `db.cierre_mirastock` sets FinalSesion, `CierreExplicito = 1`, and `ExpiraEn = now` if it was in the future (the key is revoked). No 60 s rule, and never on an already closed session or one that is no longer alive (v15). Normal heartbeats add `COALESCE(CierreExplicito, 0) = 0`.
   - Energía: `_SQL_ENERGIA_INICIO` picks the latest row in the window (no closed filter) with `UPDLOCK, HOLDLOCK`. `UPDATE ... OUTPUT deleted.* INTO @previa` captures its prior state.
@@ -448,7 +468,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - It swaps `app.db` and `mailer.enviar_bienvenida` for in-memory fakes and signs tokens with throwaway RSA keys.
   - The TestClient uses `https://testserver`. Cookies set manually need `domain="testserver.local"`.
 - JS syntax check: there is no Node on this machine. Use esprima from a scratch target dir: `pip install --target <dir> esprima==4.0.1`, then `esprima.parseScript(...)`.
-- Deploy a new version (always a new tag; v18 is next; bump `?v=` in the HTML, now `?v=17`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
+- Deploy a new version (always a new tag; v18 is next; bump `?v=` in the HTML, now `?v=18`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
 - Azure layout:
   - `ca-mira-admin` is in `RG-COPILOT-DEV`, East US, with 0.25 vCPU, 0.5 Gi and 0–1 replicas.
   - It reuses environment `managedEnvironment-rgscripth25prod-818f` and ACR `acrscripth25prod`, both in `rg-script-h25-prod`.
