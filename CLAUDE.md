@@ -225,6 +225,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - **MiraStock** is logged automatically through `core.SesionesAgente`. Nothing writes to `HistorialAccesos` for it.
   - `Fecha` and `Correo` are nullable in the view. The API returns `null` for them and the CSV leaves the cell empty.
 
+### Session of 2026-11-05 (closed): v17 → v18 in production
+- **v17** (`--0000018`, commit `c1d1f5d`): email search («contiene») for the cards and charts of each portal view (`GET /api/estadisticas/resumen`, `correo` in `/series` with portal and in `/distribucion`; `/series` with `correo` and no portal → 422), plus a visual refresh (dark gradient background with cyan/gold glows, cards with gradient/shadow/glow, buttons with glow).
+- **v18** (`--0000019`, commit `67307d8`): MiraGroup logo from `app/media/logo2.jpg` (`app/static/img/logo-miragroup.png` + `@2x`; `logoMG.png` deleted), white sticky header with blue buttons, login as a polished steel bar, metallic menu cards on `/`.
+- Docs commits `c45a669` (v17 state), `b3abd00` (v18 state) and this closing commit, all pushed to `origin/main`. **940 tests pass.** Static files at `?v=18`; the next image is **v19**.
+- Claude did not log in to Azure in this session (needs the user's password): every visual check there is PENDIENTES 1.
+- To regenerate the logo: Pillow is NOT in `requirements*.txt`; install it into a scratch dir (`pip install --target <dir> Pillow`) and redo the conversion described under v18 (logo pixels opaque, only the white background and grey shadow to alpha; crop; 240/480 px). `app/media/` (the originals) exists only on the user's machine: it is in `.gitignore` and `.dockerignore`.
+
 ### Session of 2026-11-03 (closed): v13 → v16 in production
 - **v13** (inside image v14): email search («contiene») in «Usuarios (general)» of each portal; `totalSinFiltro` in `/api/estadisticas/usuarios`.
 - **v14** (`--0000015`): «Sin actividad» / «No medida» from the view's `Medible` / `SinActividad`; Cierre priority Botón → En curso → Inactividad → Sin actividad → No medida; `sinActividad` counts in statistics and CSVs; `TOKEN_AUDIENCE` removed from the Container App.
@@ -233,9 +240,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Commits from `41f3292` (v13) to the closing commit of this session, all pushed to `origin/main`. **866 tests pass.** Static files at `?v=16`; the next image is **v17**.
 
 ### PENDIENTES (next session)
-0. **Verify v18 in Azure with the user's login:** logo in the header of every page, white sticky header over the charts and under the modals, blue header buttons, steel login (including an error message), metallic menu cards, phone width.
-0. **Verify v17 in Azure with the user's login:** the email search in a portal view (cards, charts and Top 10 filtered; chip «Filtrado por»; no match), the new background, cards and buttons, phone width, and no CSP errors in the console.
-1. **Verify v16 in Azure with the user's login:** `/estadisticas` (cards), `/estadisticas/general` and a portal view with real data (charts, tables, tabs, date filter per view), and the browser console free of CSP errors. Claude has not logged in to Azure.
+1. **Verify v16–v18 in Azure with the user's login** (Claude has not logged in to Azure):
+   - v18: logo in the header of every page, white sticky header over the charts and under the modals, blue header buttons, steel login (including an error message), metallic menu cards, phone width.
+   - v17: the email search in a portal view (cards, charts and Top 10 filtered; chip «Filtrado por»; no match; remembered per portal), the dark background, cards and buttons.
+   - v16: `/estadisticas` (cards), `/estadisticas/general` and a portal view with real data (charts, tables, tabs, date filter per view).
+   - In every page: the browser console free of CSP errors.
 2. **Verify with a real session** (MiraStock and Energía) that the JS close after 30 min of inactivity leaves the session at its last activity with Cierre «Inactividad», and that a heartbeat outside the 10-min window is ignored (v15). Checking it in `/historial` or by SQL is a prod read: ask the user first.
 3. **Levels 3/4:** catalog of funcionalidades (level 3) and subfuncionalidades (level 4) per portal, when management defines it (and where the data will come from; nothing exists yet in the DB). It will be a new entry in `SUBVISTAS` in `estadisticas.js` plus its own endpoint.
 
@@ -243,6 +252,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Start with **PENDIENTES** above. The older items below are still open unless noted.
 - **v12 deployed on 2026-10-30.** Ask the user whether login, password change and `/administradores` work in Azure (Claude did not log in there). Each admin with the default password must change it within 72 h.
 - **Session closed on 2026-10-30** after the v12 deploy; commits `13e114b` (v12 code), `77f756e` (docs) and its closing commit were pushed to `origin/main`.
+- **Session closed on 2026-11-05** after the v18 deploy (`--0000019`): see "Session of 2026-11-05" and PENDIENTES 1.
 - **v16 deployed on 2026-11-03** (`--0000017`): see PENDIENTES 1.
 - **v15 deployed on 2026-11-03** (`--0000016`). With the user's OK (prod read), check in `/historial` that new MiraStock/Energía sessions no longer get inflated by late heartbeats, and that MiraStock users are not cut off from the agent after 30 min while active (key renewal).
 - **v13 + v14 deployed on 2026-11-03** (image v14, `--0000015`). Ask the user whether the email search in «Usuarios (general)» and the «Sin actividad» / «No medida» texts look right in Azure with real data. `TOKEN_AUDIENCE` is gone from the Container App.
