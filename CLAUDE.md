@@ -8,9 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
 
-## Current status (as of 2026-11-05; v17 deployed that day; v18 built locally, not committed or deployed)
+## Current status (as of 2026-11-05; v17 and v18 deployed that day)
 
-### v18 (2026-11-05): MiraGroup logo + metallic grey menu cards — LOCAL, NOT DEPLOYED
+### v18 (2026-11-05): MiraGroup logo, white sticky header, steel login + metallic menu cards — DEPLOYED
 - Asked for by the user. **938 tests pass** (new `tests/test_logo.py`). Static `?v=18` (images too).
 - **Logo:** the user put two originals in `app/media/` (`logo1.jpg`, `logo2.jpg`, 2752×1536). Neither is really transparent: `logo1` has a checkerboard painted into the JPG, `logo2` a plain white background. User's choice: `logo2.jpg`.
   - Converted with Pillow (installed only in the scratchpad, not in `requirements`): logo pixels (colour or dark outline) stay opaque with their original colours; only the white background and the grey shadow become transparent (a plain «colour to alpha» washed out the light cyan). Cropped to the content and saved as `app/static/img/logo-miragroup.png` (240×73, ~22 KB) and `logo-miragroup@2x.png` (480×146, ~73 KB), RGBA.
@@ -27,7 +27,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - **Login = polished steel bar:** vertical gradient `#8e939a` (top edge) → `#f4f6f8` specular band at ~17 % → `#d9dde2` → `#b8bec6` → `#a3aab3` → `#8b929b` (bottom edge), subtle brushed lines, border `#7d838b`, inner top highlight and inner/outer shadows below for volume. Texts darkened so every one is ≥ 4.5:1 against every stop, including `#8b929b`: title `--plata-titulo` `#081a33` (5.5:1 minimum), text `--plata-texto` `#151c27` (5.4:1), labels `--plata-label` `#0f1520` (5.8:1), note `--plata-enlace` `#0a1f45` (5.2:1); the error box has a solid `#fde8ea` background with `#8f1424` text (7.8:1). Inputs stay white with dark text.
   - **Header buttons** (`.encabezado .btn-fantasma`: «← Inicio», «← Estadísticas», «Cerrar sesión»): blue `#0b5cd6` background and border, bold white text (5.97:1), `min-width: 160px`, padding 8 × 28 px. Hover/focus: `#1767de` (5.2:1) with a cyan border glow and a soft shadow; focus outline `#083f94` (9.8:1 on white), 3 px offset. At ≤ 480 px: `min-width: 120px`, padding 4 × 16 px.
 - The halo now only applies where the logo sits on the dark background (the «Tu sesión venció» card and `error.html`); the `logo-placa` alternative is still available.
-- Pending: the user's local review, then commit, build and deploy of image v18 (each with the user's OK).
+- The user reviewed all of v18 locally (logo, white sticky header with blue buttons, steel login, menu cards) and approved it on 2026-11-05.
+- Commit `67307d8`. Deployed on 2026-11-05 (~13:46 UTC) as image `mira-admin-app:v18`, revision `--0000019`.
+  - Checks: `/health` 200; `/login` 200 (serves `card-plata`, `styles.css?v=18` and the logo `srcset`); `/static/img/logo-miragroup.png?v=18` 200 (`image/png`, 22,400 bytes); `@2x` 200; `/static/logoMG.png` 404; startup clean. `--0000019` has 100% of the traffic; `--0000018` (v17) was deprovisioning.
+  - Not done by Claude in Azure: a real login and looking at the pages behind it (needs the user's password).
 
 
 ### v17 (2026-11-05): email search for the charts of each portal + visual refresh — DEPLOYED
@@ -230,6 +233,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Commits from `41f3292` (v13) to the closing commit of this session, all pushed to `origin/main`. **866 tests pass.** Static files at `?v=16`; the next image is **v17**.
 
 ### PENDIENTES (next session)
+0. **Verify v18 in Azure with the user's login:** logo in the header of every page, white sticky header over the charts and under the modals, blue header buttons, steel login (including an error message), metallic menu cards, phone width.
 0. **Verify v17 in Azure with the user's login:** the email search in a portal view (cards, charts and Top 10 filtered; chip «Filtrado por»; no match), the new background, cards and buttons, phone width, and no CSP errors in the console.
 1. **Verify v16 in Azure with the user's login:** `/estadisticas` (cards), `/estadisticas/general` and a portal view with real data (charts, tables, tabs, date filter per view), and the browser console free of CSP errors. Claude has not logged in to Azure.
 2. **Verify with a real session** (MiraStock and Energía) that the JS close after 30 min of inactivity leaves the session at its last activity with Cierre «Inactividad», and that a heartbeat outside the 10-min window is ignored (v15). Checking it in `/historial` or by SQL is a prod read: ask the user first.
@@ -256,7 +260,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Deployment
 - URL: https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io
 - Revision mode `Single`: traffic follows the latest revision, and no older one is kept for rollback.
-- **Running: image v17, revision `ca-mira-admin--0000018`, with own login (always on), `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~12:51 UTC on 2026-11-05. `/health` is OK and startup was clean. It has 100% of the traffic; `--0000017` (v16) was deprovisioning right after the deploy. `ENERGIA_PORTAL_URL`, `LATIDO_ORIGINS`, `PORTAL_BASE_URL` and `TOKEN_AUDIENCE` are not set in Azure, so the code defaults apply. The next image is **v18** (static files are at `?v=17`; bump to `?v=18` if they change).
+- **Running: image v18, revision `ca-mira-admin--0000019`, with own login (always on), `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~13:46 UTC on 2026-11-05. `/health` is OK and startup was clean. It has 100% of the traffic; `--0000018` (v17) was deprovisioning right after the deploy. `ENERGIA_PORTAL_URL`, `LATIDO_ORIGINS`, `PORTAL_BASE_URL` and `TOKEN_AUDIENCE` are not set in Azure, so the code defaults apply. The next image is **v19** (static files are at `?v=18`; bump to `?v=19` if they change).
 - Image history:
   - v3: auth off.
   - v4: External ID + PDF attachment.
@@ -273,6 +277,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - v15: 10-min «alive» window for MiraStock and Energía-key heartbeats/closes + MiraStock key renewal, no static changes (`--0000016`).
   - v16: charts in `/estadisticas` (Chart.js 4.4.7 hosted), `/api/estadisticas/series` + `/distribucion`, cards home + `/estadisticas/general` and `/estadisticas/portal/<slug>`, `slug` in `/portales`, `?v=16` (`--0000017`).
   - v17: email search for the charts of each portal (`/api/estadisticas/resumen`, `correo` in `/series` and `/distribucion`) + visual refresh (background, cards, buttons), `?v=17` (`--0000018`).
+  - v18: MiraGroup logo (`app/static/img/`), white sticky header with blue buttons, steel login, metallic menu cards, `?v=18` (`--0000019`).
 - **az CLI** is logged in to both tenants (`e3112796-…` workforce/subscription, `cb938793-…` External ID), and the active one can switch. Before az commands on Azure resources, run `az account set --subscription 38b3f030-c7b5-4d38-822b-c533f88cd34a`.
 - Logs older than the current replica (it scales to 0): Log Analytics workspace `d8a192a1-91f6-4add-882c-d1396d044ba0`, table `ContainerAppConsoleLogs_CL`, via `az monitor log-analytics query`. The app logs the user Id and the External ID account id, never the email.
 
@@ -309,7 +314,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Verified:
   - The portal public key loads (local and Azure).
   - `/health`, the no-session page, and the 401/404 checks pass.
-  - **919 tests pass** (v17, locally; `tests/test_sin_auth.py` no longer exists).
+  - **940 tests pass** (v18, locally; `tests/test_sin_auth.py` no longer exists).
   - v11 statistics match independent SQL on the production view (2026-10-30).
   - Code-only sign-in with a federated/mail account works.
   - Welcome emails arrive at other domains (per the user).
@@ -468,7 +473,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - It swaps `app.db` and `mailer.enviar_bienvenida` for in-memory fakes and signs tokens with throwaway RSA keys.
   - The TestClient uses `https://testserver`. Cookies set manually need `domain="testserver.local"`.
 - JS syntax check: there is no Node on this machine. Use esprima from a scratch target dir: `pip install --target <dir> esprima==4.0.1`, then `esprima.parseScript(...)`.
-- Deploy a new version (always a new tag; v18 is next; bump `?v=` in the HTML, now `?v=18`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
+- Deploy a new version (always a new tag; v19 is next; bump `?v=` in the HTML, now `?v=18`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
 - Azure layout:
   - `ca-mira-admin` is in `RG-COPILOT-DEV`, East US, with 0.25 vCPU, 0.5 Gi and 0–1 replicas.
   - It reuses environment `managedEnvironment-rgscripth25prod-818f` and ACR `acrscripth25prod`, both in `rg-script-h25-prod`.
