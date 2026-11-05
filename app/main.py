@@ -1186,6 +1186,16 @@ def api_estadisticas_portales_csv(
     )
 
 
+@app.get("/api/estadisticas/resumen")
+def api_estadisticas_resumen(
+    admin: dict = Depends(require_admin),
+    filtros: db.FiltrosHistorial = Depends(_filtros_estadisticas_portal),
+):
+    """Tarjetas de la vista de un portal (v17), con filtro opcional de correo (contiene)."""
+    datos = db.estadisticas_resumen_portal(filtros.portal, filtros.desde, filtros.hasta, filtros.correo)
+    return {"portal": filtros.portal, "correo": filtros.correo, **_estadistica_json(datos)}
+
+
 @app.get("/api/estadisticas/usuarios")
 def api_estadisticas_usuarios(
     admin: dict = Depends(require_admin),
@@ -1240,17 +1250,30 @@ ETIQUETAS_DURACION = ("< 5 min", "5–15 min", "15–30 min", "30–60 min", "> 
 
 
 def _filtros_series(
-    portal: str | None = None, desde: str | None = None, hasta: str | None = None
+    portal: str | None = None, correo: str | None = None, desde: str | None = None, hasta: str | None = None
 ) -> db.FiltrosHistorial:
-    """Fechas y portal opcional (sin portal = todos, desglosado por portal)."""
-    return _filtros_historial(portal=portal, desde=desde, hasta=hasta)
+    """Fechas, portal opcional (sin portal = todos, desglosado por portal) y correo (v17, solo con portal).
+
+    Junta todos los errores en un solo 422.
+    """
+    errores: dict[str, str] = {}
+    filtros = None
+    try:
+        filtros = _filtros_historial(correo=correo, portal=portal, desde=desde, hasta=hasta)
+    except ErrorValidacion as e:
+        errores = e.errores
+    if correo and correo.strip() and not (portal and portal.strip()) and "correo" not in errores:
+        errores = {"correo": "Indica el portal para buscar por correo.", **errores}
+    if errores:
+        raise ErrorValidacion(errores)
+    return filtros
 
 
 def _filtros_distribucion(
-    portal: str | None = None, desde: str | None = None, hasta: str | None = None
+    portal: str | None = None, correo: str | None = None, desde: str | None = None, hasta: str | None = None
 ) -> db.FiltrosHistorial:
-    """Portal obligatorio y fechas (sin filtro de correo)."""
-    return _filtros_estadisticas_portal(portal=portal, correo=None, desde=desde, hasta=hasta)
+    """Portal obligatorio, fechas y correo opcional (v17, contiene)."""
+    return _filtros_estadisticas_portal(portal=portal, correo=correo, desde=desde, hasta=hasta)
 
 
 def _dia_local(fecha: datetime, tz_offset_min: int) -> date:
@@ -1278,7 +1301,7 @@ def api_estadisticas_series(
     primero, ultimo = _limites_series(filtros, tz_offset_min)
     if primero and ultimo:
         _error_rango_series(primero, ultimo, f"El rango no puede superar los {MAX_DIAS_SERIES} días.")
-    datos = db.estadisticas_series(filtros.portal, filtros.desde, filtros.hasta, tz_offset_min)
+    datos = db.estadisticas_series(filtros.portal, filtros.desde, filtros.hasta, tz_offset_min, filtros.correo)
     filas = datos["filas"]
     # Sin alguna de las fechas, el relleno va del primer al último día con datos.
     dias_con_datos = [f["dia"] for f in filas]
@@ -1318,9 +1341,12 @@ def api_estadisticas_distribucion(
     filtros: db.FiltrosHistorial = Depends(_filtros_distribucion),
     tz_offset_min: int = Query(0, ge=-840, le=840),
 ):
-    datos = db.estadisticas_distribucion(filtros.portal, filtros.desde, filtros.hasta, tz_offset_min)
+    datos = db.estadisticas_distribucion(
+        filtros.portal, filtros.desde, filtros.hasta, tz_offset_min, filtros.correo
+    )
     return {
         "portal": filtros.portal,
+        "correo": filtros.correo,
         "cierres": datos["cierres"],
         "duracion": {
             "rangos": [

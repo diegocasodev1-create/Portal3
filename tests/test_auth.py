@@ -54,7 +54,7 @@ def test_login_es_publico(cliente):
     resp = cliente.get("/login")
     assert resp.status_code == 200
     assert 'id="form-ingreso"' in resp.text
-    assert '<script src="/static/login.js?v=16"' in resp.text
+    assert '<script src="/static/login.js?v=17"' in resp.text
 
 
 def test_cambiar_contrasena_sin_sesion_redirige(cliente):
@@ -251,8 +251,8 @@ def test_paginas_con_contrasenas_cargan_comun_js_primero(cliente, bd, ruta, prop
         from tests.conftest import poner_sesion
         poner_sesion(cliente, bd.admins[1])
     texto = cliente.get(ruta).text
-    comun = texto.index('<script src="/static/comun.js?v=16" defer></script>')
-    assert comun < texto.index(f'<script src="/static/{propio}?v=16" defer></script>')
+    comun = texto.index('<script src="/static/comun.js?v=17" defer></script>')
+    assert comun < texto.index(f'<script src="/static/{propio}?v=17" defer></script>')
     assert texto.count('type="password"') == campos
 
 

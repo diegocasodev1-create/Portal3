@@ -647,6 +647,27 @@ def estadisticas_portales(desde: datetime | None, hasta: datetime | None) -> dic
     }
 
 
+def estadisticas_resumen_portal(
+    portal: str, desde: datetime | None, hasta: datetime | None, correo: str | None = None
+) -> dict[str, Any]:
+    """Tarjetas de un portal (v17): usuarios únicos y agregados de sesiones, con filtro opcional de correo.
+
+    Los usuarios únicos salen de un COUNT(DISTINCT Correo) sobre todo el rango (no de sumar días).
+    """
+    where, params = _where_sesiones(portal, desde, hasta, correo)
+    with _conexion() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT COUNT(DISTINCT Correo), {_AGREGADOS_SESIONES} FROM core.vHistorialAccesos{where}",
+            *params,
+        )
+        fila = cur.fetchone()
+    if not fila:
+        return {"usuariosUnicos": 0, **_sin_sesiones()}
+    unicos, *resto = fila
+    return {"usuariosUnicos": unicos or 0, **_agregados(*resto)}
+
+
 def contar_usuarios_portal(portal: str, desde: datetime | None, hasta: datetime | None) -> int:
     """Usuarios distintos con sesiones OK en el portal y el rango, sin filtro de correo."""
     where, params = _where_sesiones(portal, desde, hasta)
@@ -710,14 +731,16 @@ _CASE_DURACION = (
 
 
 def estadisticas_series(
-    portal: str | None, desde: datetime | None, hasta: datetime | None, tz_offset_min: int
+    portal: str | None, desde: datetime | None, hasta: datetime | None, tz_offset_min: int,
+    correo: str | None = None,
 ) -> dict[str, Any]:
     """Sesiones, segundos y usuarios únicos por día local, por portal y en total (sin repetir usuarios).
 
     Devuelve {"portales": nombres conocidos (o solo `portal`), "filas": [{dia, portal (None = total), ...}]}.
-    Los días sin datos no vienen: los rellena main.py.
+    Los días sin datos no vienen: los rellena main.py. `correo` (v17) filtra por «contiene»; main.py solo
+    lo acepta junto con un portal.
     """
-    where, params = _where_sesiones(portal, desde, hasta)
+    where, params = _where_sesiones(portal, desde, hasta, correo)
     with _conexion() as conn:
         cur = conn.cursor()
         if portal:
@@ -747,14 +770,14 @@ def estadisticas_series(
 
 
 def estadisticas_distribucion(
-    portal: str, desde: datetime | None, hasta: datetime | None, tz_offset_min: int
+    portal: str, desde: datetime | None, hasta: datetime | None, tz_offset_min: int, correo: str | None = None
 ) -> dict[str, Any]:
     """Cómo terminan las sesiones, rangos de duración y matriz día de la semana × hora (local) de un portal.
 
     El día de la semana no depende de @@DATEFIRST: el 1900-01-01 fue lunes, así que
-    DATEDIFF(day, '19000101', día) % 7 da lunes = 0 … domingo = 6.
+    DATEDIFF(day, '19000101', día) % 7 da lunes = 0 … domingo = 6. `correo` (v17) filtra por «contiene».
     """
-    where, params = _where_sesiones(portal, desde, hasta)
+    where, params = _where_sesiones(portal, desde, hasta, correo)
     cierres = dict.fromkeys(TIPOS_CIERRE, 0)
     duracion = [0] * (len(BORDES_DURACION) + 1)
     sin_actividad = sin_medir = 0

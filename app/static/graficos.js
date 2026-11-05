@@ -97,7 +97,9 @@
       el("span", { class: "spinner", "aria-hidden": "true" }),
       el("span", { text: "Cargando…" }),
     ]);
-    const vacio = el("div", { class: "estado estado-grafico", hidden: true }, el("p", { text: "Sin datos en el rango" }));
+    const TEXTO_VACIO = "Sin datos en el rango";
+    const textoVacio = el("p", { text: TEXTO_VACIO });
+    const vacio = el("div", { class: "estado estado-grafico", hidden: true }, textoVacio);
     const textoError = el("p", { text: "No se pudieron cargar los datos." });
     const botonReintentar = el("button", { type: "button", class: "btn btn-secundario btn-chico", text: "Reintentar" });
     botonReintentar.addEventListener("click", () => reintentar && reintentar());
@@ -129,6 +131,8 @@
         pie.hidden = true;
       }
       if (cual === "error" && mensaje) textoError.textContent = mensaje;
+      // «vacío» con texto propio (p. ej. sin coincidencias de la búsqueda); sin texto, el de por defecto.
+      if (cual === "vacio") textoVacio.textContent = mensaje || TEXTO_VACIO;
     };
 
     // Destruye el gráfico anterior antes de crear el nuevo (no se acumulan instancias).

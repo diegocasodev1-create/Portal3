@@ -72,9 +72,10 @@ def test_distribucion_exige_portal(cliente_admin, bd, portal):
     assert bd.llamadas_historial == []
 
 
-def test_distribucion_no_acepta_filtro_de_correo(cliente_admin, bd):
+def test_distribucion_pasa_el_filtro_de_correo(cliente_admin, bd):
+    # v16 ignoraba `correo`; desde v17 filtra por «contiene» (ver tests/test_buscador_graficos.py).
     cliente_admin.get("/api/estadisticas/distribucion", params={"portal": "Energía", "correo": "a"})
-    assert bd.llamadas_historial == [("distribucion", "Energía", None, None, 0)]
+    assert bd.llamadas_historial == [("distribucion", "Energía", None, None, 0, "a")]
 
 
 # ---------------------------------------------------------------------------
@@ -358,10 +359,10 @@ def test_bordes_de_duracion_coinciden_con_el_sql():
 def test_pagina_carga_chartjs_antes_que_los_graficos(cliente_admin, ruta):
     texto = cliente_admin.get(ruta).text
     orden = [
-        '<script src="/static/vendor/chart.umd.4.4.7.min.js?v=16" defer></script>',
-        '<script src="/static/comun.js?v=16" defer></script>',
-        '<script src="/static/graficos.js?v=16" defer></script>',
-        '<script src="/static/estadisticas.js?v=16" defer></script>',
+        '<script src="/static/vendor/chart.umd.4.4.7.min.js?v=17" defer></script>',
+        '<script src="/static/comun.js?v=17" defer></script>',
+        '<script src="/static/graficos.js?v=17" defer></script>',
+        '<script src="/static/estadisticas.js?v=17" defer></script>',
     ]
     posiciones = [texto.index(s) for s in orden]
     assert posiciones == sorted(posiciones)

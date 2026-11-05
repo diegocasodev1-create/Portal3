@@ -29,7 +29,7 @@ Desde la v7 incluye además **Logs control de ingresos**: una página de solo le
 | `/contactos` | **Centro Administración de contactos**: la administración de usuarios (hasta la v6 estaba en `/`) |
 | `/estadisticas` | **Estadísticas del Portal Corporativo MiraGroup** (v11; desde la v16, inicio con cards): una card «General por portal» y una por portal con el resumen de los últimos 30 días (ver "Estadísticas") |
 | `/estadisticas/general` | v16: gráficos y tabla del total por portal, con su propio filtro de fechas |
-| `/estadisticas/portal/<slug>` | v16: gráficos y pestañas Usuarios (general/detallado) de un portal (`energia`, `mirastock`…); «Portal no encontrado» si no existe |
+| `/estadisticas/portal/<slug>` | v16: gráficos y pestañas Usuarios (general/detallado) de un portal (`energia`, `mirastock`…); «Portal no encontrado» si no existe. v17: buscador por correo para las tarjetas y los gráficos |
 | `/historial` | **Logs control de ingresos** (historial completo): indicadores, gráfico por día, tabla paginada y exportación a Excel. Sin card en el inicio desde la v11; se llega desde «Historial completo» en `/estadisticas` |
 | `/administradores` | **Centro de administración principal** (v12): administradores en cards y edición con la contraseña de cada uno (ver "Administradores") |
 
@@ -103,8 +103,9 @@ login). Única excepción: `/api/latido`.
 | `GET /api/estadisticas/portales/csv` | El mismo cuadro en CSV, con fila «Total Portal Corporativo» (`tz_offset_min`) |
 | `GET /api/estadisticas/usuarios` | Una fila por usuario de un portal (`portal` obligatorio, `desde`/`hasta`, `correo` opcional: contiene, v13). → `{portal, correo, filas, total, totalSinFiltro, truncado}` |
 | `GET /api/estadisticas/usuarios/csv` | La misma lista en CSV (`tz_offset_min`, `correo`; tope 5.000 usuarios) |
-| `GET /api/estadisticas/series` | v16: sesiones, segundos y usuarios por día local, por portal y en total (`portal` opcional, `desde`/`hasta`, `tz_offset_min`; ver "Gráficos") |
-| `GET /api/estadisticas/distribucion` | v16: tipos de cierre, rangos de duración y matriz día × hora de un portal (`portal` obligatorio, `desde`/`hasta`, `tz_offset_min`) |
+| `GET /api/estadisticas/resumen` | v17: tarjetas de un portal (`portal` obligatorio, `desde`/`hasta`, `correo` opcional: contiene). → `{portal, correo, usuariosUnicos, sesiones, segundosTotales, promedioSeg, sesionesMedidas, ultimaConexion, sinActividad}` |
+| `GET /api/estadisticas/series` | v16: sesiones, segundos y usuarios por día local, por portal y en total (`portal` opcional, `desde`/`hasta`, `tz_offset_min`; v17: `correo` opcional, solo con `portal`; ver "Gráficos") |
+| `GET /api/estadisticas/distribucion` | v16: tipos de cierre, rangos de duración y matriz día × hora de un portal (`portal` obligatorio, `desde`/`hasta`, `tz_offset_min`; v17: `correo` opcional) |
 
 Los errores siempre vienen como `{"detail": "mensaje en español"}`. `avisoCuenta: true` indica que la operación en
 SQL salió bien pero falló la cuenta de acceso; el `mensaje` trae el motivo y la interfaz lo muestra como aviso.
@@ -326,6 +327,25 @@ GET /api/estadisticas/distribucion?portal=Energía&desde&hasta&tz_offset_min
   `DATEDIFF(day, '19000101', día) % 7` (el 1900-01-01 fue lunes → lunes = 0).
 - Los dos validan igual que el resto de las estadísticas (422 `{detail, errores}`; 401 sin sesión, antes de validar).
 - Validado contra producción el 2026-11-03 (solo lectura): los totales de los dos SQL coinciden con `/portales`.
+
+### Buscador por correo de los gráficos (v17)
+
+Solo en la vista de cada portal (`/estadisticas/portal/<slug>`); la vista general no cambia.
+
+- **Interfaz:** entre el filtro de fechas y las tarjetas, un campo «Correo» («Contiene…») con «Buscar» (o Enter).
+  Con un filtro activo, arriba de los gráficos aparece «Filtrado por: <texto>» con una × que lo quita. El texto
+  aplicado se guarda en `sessionStorage` (`mira.estadisticas.correo.portal.<slug>`, una clave por portal, como las
+  fechas) y se vuelve a aplicar al cambiar las fechas. Sin coincidencias: tarjetas en 0 y «Sin sesiones que
+  coincidan con la búsqueda» en cada gráfico.
+- **Qué filtra:** las tarjetas (`/resumen`), sesiones y horas por día (`/series` con `portal`), el top 10
+  (`/usuarios`) y cierres, duración y mapa de calor (`/distribucion`). Las pestañas «Usuarios (general)» y
+  «Usuarios (detallado)» siguen con sus propios buscadores, independientes.
+- **Criterio:** el mismo que `/api/historial`: «contiene», sin distinguir mayúsculas, `%`, `_`, `[` y `\` literales
+  (`LIKE ... ESCAPE '\'`), hasta 256 caracteres (más → 422 en `correo`).
+- **Tarjetas:** sin filtro siguen saliendo de `/portales`; con filtro, de `GET /api/estadisticas/resumen`, que cuenta
+  los usuarios únicos con un `COUNT(DISTINCT Correo)` sobre todo el rango (no sumando días). `/portales` no se tocó.
+- `/series` con `correo` y sin `portal` → 422 «Indica el portal para buscar por correo.». Sin `correo`, todos los
+  endpoints responden igual que en la v16.
 
 ## Cuentas de acceso en External ID
 
@@ -567,7 +587,7 @@ Luego usa `SQL_USER=mira_admin_app` y esa clave en el Container App.
 | Suscripción | CreditosCopilot1 (`38b3f030-c7b5-4d38-822b-c533f88cd34a`) |
 | Container App | `ca-mira-admin` en `RG-COPILOT-DEV`, East US |
 | Environment (reutilizado) | `managedEnvironment-rgscripth25prod-818f` (`rg-script-h25-prod`, East US) |
-| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v16` (revisión `ca-mira-admin--0000017`, 2026-11-03). La v13 no tiene imagen propia: salió dentro de la v14. El próximo tag es `v17` |
+| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v16` (revisión `ca-mira-admin--0000017`, 2026-11-03). La v13 no tiene imagen propia: salió dentro de la v14. El próximo tag es `v17` (buscador por correo de los gráficos, `?v=17`; aún sin desplegar) |
 | Recursos | 0.25 vCPU, 0.5 GiB, réplicas mín. 0 / máx. 1, ingress externo solo HTTPS (HTTP redirige) |
 | Pull de la imagen | Usuario admin del ACR (guardado como secret del Container App). Con rol Contributor no se puede asignar `AcrPull` a una identidad administrada |
 | Secrets | `sql-password`, `session-secret`, `graph-client-secret` (secreto de la app "Portal Externo - Envio de correos"), `extid-client-secret` (secreto de la app de External ID) |

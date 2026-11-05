@@ -62,7 +62,7 @@ def test_inicio_tiene_cards_e_historial(cliente_admin):
     assert "<h1>Estadísticas del Portal Corporativo MiraGroup</h1>" in texto
     assert 'class="modulos modulos-estadisticas" id="cards-estadisticas"' in texto
     assert 'href="/historial">Historial completo</a>' in texto
-    assert '<script src="/static/estadisticas-inicio.js?v=16" defer></script>' in texto
+    assert '<script src="/static/estadisticas-inicio.js?v=17" defer></script>' in texto
     # El inicio no dibuja gráficos: no carga Chart.js.
     assert "chart.umd" not in texto and 'id="form-rango"' not in texto
 

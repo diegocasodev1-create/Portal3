@@ -35,7 +35,7 @@ def test_pagina_estadisticas_estructura(cliente_admin):
     texto = cliente_admin.get("/estadisticas").text
     assert 'id="cards-estadisticas"' in texto and "<details" not in texto
     assert 'href="/historial"' in texto and 'href="/">← Inicio</a>' in texto
-    assert '<script src="/static/comun.js?v=16" defer></script>' in texto
+    assert '<script src="/static/comun.js?v=17" defer></script>' in texto
 
 
 def test_historial_enlaza_estadisticas(cliente_admin):
@@ -359,7 +359,8 @@ def test_usuarios_filtro_con_tope(cliente_admin, bd, monkeypatch):
 def test_js_usuarios_general_tiene_buscador(cliente_admin):
     texto = cliente_admin.get("/static/estadisticas.js").text
     assert "Sin usuarios que coincidan con la búsqueda" in texto
-    assert texto.count('placeholder: "Contiene…"') == 2
+    # Tablas «Usuarios (general)» y «Usuarios (detallado)» + el buscador de los gráficos (v17).
+    assert texto.count('placeholder: "Contiene…"') == 3
 
 
 # ---------------------------------------------------------------------------

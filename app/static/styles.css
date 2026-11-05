@@ -14,6 +14,11 @@
   --exito: #3ddc97;
   --aviso: #ffc457;
   --radio: 18px;
+  /* v17: fondo con brillos, cards y botones con resplandor */
+  --dorado: #d9a441;
+  --card-fondo: linear-gradient(155deg, rgba(18, 42, 78, 0.88) 0%, rgba(9, 22, 46, 0.82) 55%, rgba(5, 13, 30, 0.86) 100%);
+  --card-sombra: 0 10px 28px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --transicion: 0.25s ease;
   --fuente: "Exo 2", "Segoe UI", system-ui, sans-serif;
 }
 
@@ -30,8 +35,14 @@ body {
   font-size: 15px;
   line-height: 1.5;
   color: var(--texto);
-  background: radial-gradient(ellipse at top, var(--fondo-2) 0%, var(--fondo) 65%) fixed;
+  /* Azul marino muy oscuro con un brillo cian (arriba a la izquierda) y uno dorado (abajo a la derecha). */
   background-color: var(--fondo);
+  background-image:
+    radial-gradient(ellipse 70% 60% at 0% 0%, rgba(41, 184, 236, 0.17) 0%, rgba(41, 184, 236, 0) 70%),
+    radial-gradient(ellipse 65% 55% at 100% 100%, rgba(217, 164, 65, 0.13) 0%, rgba(217, 164, 65, 0) 70%),
+    linear-gradient(160deg, #071430 0%, #040b1c 50%, #02060f 100%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
 }
 
 body.modal-abierto { overflow: hidden; }
@@ -74,20 +85,30 @@ a { color: var(--acento-suave); }
   border: 1px solid transparent; border-radius: 999px;
   font: inherit; font-weight: 600; font-size: 0.95rem;
   text-decoration: none; white-space: nowrap; cursor: pointer;
-  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  --brillo-btn: var(--acento);
+  transition: background-color var(--transicion), border-color var(--transicion), color var(--transicion),
+    box-shadow var(--transicion);
 }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+/* Hover y teclado: borde iluminado con el color de acento y una sombra suave. */
+.btn:hover:not(:disabled), .btn:focus-visible {
+  box-shadow: 0 0 0 1px var(--brillo-btn), 0 0 16px rgba(41, 184, 236, 0.35), 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+.btn:focus-visible { outline: 2px solid var(--acento-suave); outline-offset: 3px; }
 
 .btn-primario { background: var(--acento); color: var(--fondo); }
-.btn-primario:hover:not(:disabled) { background: var(--acento-suave); }
+.btn-primario:hover:not(:disabled), .btn-primario:focus-visible { background: var(--acento-suave); }
 
 .btn-secundario { background: transparent; color: var(--acento-suave); border-color: var(--borde); }
-.btn-secundario:hover:not(:disabled) { border-color: var(--acento); color: var(--texto); }
+.btn-secundario:hover:not(:disabled), .btn-secundario:focus-visible { border-color: var(--acento); color: var(--texto); }
 
 .btn-fantasma { background: transparent; color: var(--texto-2); border-color: var(--borde-suave); }
-.btn-fantasma:hover:not(:disabled) { color: var(--texto); border-color: var(--texto-2); }
+.btn-fantasma:hover:not(:disabled), .btn-fantasma:focus-visible { color: var(--texto); border-color: var(--acento); }
 
-.btn-peligro { background: var(--peligro); color: var(--fondo); }
+.btn-peligro { background: var(--peligro); color: var(--fondo); --brillo-btn: var(--peligro); }
+.btn-peligro:hover:not(:disabled), .btn-peligro:focus-visible {
+  box-shadow: 0 0 0 1px var(--peligro), 0 0 16px rgba(255, 107, 122, 0.35), 0 6px 16px rgba(0, 0, 0, 0.35);
+}
 .btn-peligro:hover:not(:disabled) { background: #ff8f9a; }
 
 .btn-chico { min-height: 32px; padding: 4px 12px; font-size: 0.85rem; }
@@ -257,20 +278,51 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
   display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;
   max-width: 960px; margin: 4vh auto 0;
 }
+/* v17: cards con degradado, sombra en reposo y, en hover/teclado, suben y brillan con su color
+   (--brillo: cian por defecto; en Estadísticas, el color de cada portal). */
+.card-modulo, .card-admin {
+  --brillo: var(--acento);
+  --brillo-suave: rgba(41, 184, 236, 0.35);
+  background: var(--card-fondo);
+  box-shadow: var(--card-sombra);
+  transition: border-color var(--transicion), box-shadow var(--transicion), transform var(--transicion);
+}
+.card-modulo:hover, .card-modulo:focus-visible,
+.card-admin:hover:not(:disabled), .card-admin:focus-visible:not(:disabled) {
+  border-color: var(--brillo);
+  box-shadow: 0 0 0 1px var(--brillo), 0 0 24px var(--brillo-suave), 0 20px 44px rgba(0, 0, 0, 0.55);
+  transform: translateY(-4px);
+}
+.card-modulo:focus-visible, .card-admin:focus-visible { outline: 2px solid var(--acento-suave); outline-offset: 3px; }
+
 .card-modulo {
   display: flex; flex-direction: column; gap: 10px;
   padding: 28px 26px; color: var(--texto); text-decoration: none;
-  transition: border-color 0.15s, transform 0.15s, background-color 0.15s;
 }
-.card-modulo:hover { border-color: var(--acento); background: rgba(10, 26, 51, 0.9); transform: translateY(-2px); }
 .modulo-icono {
   width: 44px; height: 44px; padding: 9px; margin-bottom: 6px;
   color: var(--acento); border: 1px solid var(--borde); border-radius: 14px; background: rgba(41, 184, 236, 0.08);
+  transition: filter var(--transicion), border-color var(--transicion), background-color var(--transicion);
 }
-.modulo-titulo { font-size: 1.2rem; font-weight: 600; }
+.card-modulo:hover .modulo-icono, .card-modulo:focus-visible .modulo-icono {
+  border-color: var(--brillo); background-color: rgba(41, 184, 236, 0.16);
+  filter: drop-shadow(0 0 6px var(--brillo-suave));
+}
+.modulo-titulo {
+  font-size: clamp(1.3rem, 1rem + 1.4vw, 1.85rem); font-weight: 700; line-height: 1.2; letter-spacing: 0.005em;
+}
 .modulo-texto { color: var(--texto-2); font-size: 0.92rem; flex: 1; }
 .modulo-ir { color: var(--acento-suave); font-weight: 600; font-size: 0.9rem; }
-@media (prefers-reduced-motion: reduce) { .card-modulo:hover { transform: none; } }
+.modulo-flecha { display: inline-block; transition: transform var(--transicion); }
+.card-modulo:hover .modulo-flecha, .card-modulo:focus-visible .modulo-flecha { transform: translateX(5px); }
+
+/* Sin movimiento: solo cambian colores, brillo y sombra. */
+@media (prefers-reduced-motion: reduce) {
+  .card-modulo, .card-admin, .modulo-flecha, .modulo-icono, .btn { transition-property: border-color, box-shadow, color, background-color, filter; }
+  .card-modulo:hover, .card-modulo:focus-visible,
+  .card-admin:hover:not(:disabled), .card-admin:focus-visible:not(:disabled),
+  .card-modulo:hover .modulo-flecha, .card-modulo:focus-visible .modulo-flecha { transform: none; }
+}
 
 /* ---------- Historial: filtros, indicadores, gráfico y paginación ---------- */
 
@@ -333,7 +385,11 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
   content: ""; position: absolute; inset: 0 0 auto 0; height: 5px;
   background: var(--color-portal, var(--acento));
 }
-.card-estadistica:hover { border-color: var(--color-portal, var(--acento)); }
+.card-estadistica {
+  --brillo: var(--color-portal, var(--acento));
+  --brillo-suave: rgba(41, 184, 236, 0.35);
+  --brillo-suave: color-mix(in srgb, var(--color-portal, var(--acento)) 38%, transparent);
+}
 .estadistica-resumen { font-size: 1.05rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .estadistica-usuarios { color: var(--texto-2); font-size: 0.88rem; font-variant-numeric: tabular-nums; }
 
@@ -379,7 +435,22 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;
   padding: 14px 20px 6px;
 }
-.graficos-tarjetas, .grafico-completo { grid-column: 1 / -1; }
+.graficos-tarjetas, .grafico-completo, .filtro-activo { grid-column: 1 / -1; }
+/* v17: «Filtrado por: <texto> ×» arriba de los gráficos de un portal. */
+.filtro-activo {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px; justify-self: start; max-width: 100%;
+  margin: 0; padding: 4px 6px 4px 12px; font-size: 0.88rem; color: var(--texto-2);
+  border: 1px solid var(--borde-suave); border-radius: 999px;
+}
+.filtro-activo strong { color: var(--texto); font-weight: 600; overflow-wrap: anywhere; }
+.filtro-quitar {
+  display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
+  font: inherit; font-size: 1.05rem; line-height: 1; color: var(--texto-2);
+  background: transparent; border: 0; border-radius: 50%; cursor: pointer;
+}
+.filtro-quitar:hover { color: var(--texto); background: var(--borde-suave); }
+.filtro-quitar:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+.buscador-graficos { padding-bottom: 0; }
 .graficos-tarjetas { margin-bottom: 0; }
 .graficos-tarjetas:empty { display: none; }
 .grafico-panel { min-width: 0; padding: 14px 16px 16px; box-shadow: none; }
@@ -469,12 +540,10 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
 .card-admin {
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; height: 100%;
   padding: 20px 22px; font: inherit; color: var(--texto); text-align: left; cursor: pointer;
-  transition: border-color 0.15s, transform 0.15s, background-color 0.15s;
 }
-.card-admin:hover:not(:disabled) { border-color: var(--acento); background: rgba(10, 26, 51, 0.9); transform: translateY(-2px); }
 .card-admin:disabled { cursor: not-allowed; opacity: 0.65; }
 .admin-cabecera { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.admin-titulo { font-size: 1.1rem; font-weight: 600; }
+.admin-titulo { font-size: clamp(1.2rem, 0.95rem + 1vw, 1.6rem); font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
 .admin-correo-card { color: var(--acento-suave); font-size: 0.9rem; overflow-wrap: anywhere; }
 .admin-dato { display: flex; flex-direction: column; font-size: 0.88rem; }
 .admin-dato-nombre { color: var(--texto-2); font-size: 0.78rem; }
@@ -484,7 +553,6 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
 .chip-inactivo { background: transparent; color: rgba(169, 188, 212, 0.8); border: 1px solid var(--borde-suave); }
 #modal-ficha .error-general, #modal-verificar .error-general { margin-bottom: 14px; }
 #verificar-texto strong { color: var(--acento-suave); }
-@media (prefers-reduced-motion: reduce) { .card-admin:hover:not(:disabled) { transform: none; } }
 
 /* ---------- Responsive: la tabla pasa a tarjetas ---------- */
 

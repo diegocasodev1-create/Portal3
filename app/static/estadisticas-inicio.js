@@ -31,7 +31,7 @@
       el("span", { class: "modulo-texto", text: detalle }),
       el("span", { class: "estadistica-resumen", text: textoResumen(d) }),
       el("span", { class: "estadistica-usuarios", text: textoUsuarios(d.usuariosUnicos || 0) }),
-      el("span", { class: "modulo-ir", "aria-hidden": "true", text: "Entrar →" }),
+      el("span", { class: "modulo-ir", "aria-hidden": "true" }, ["Entrar ", el("span", { class: "modulo-flecha", text: "→" })]),
     ]);
     // Color de la franja superior (CSSOM: la CSP lo permite).
     if (color) nodo.style.setProperty("--color-portal", color);

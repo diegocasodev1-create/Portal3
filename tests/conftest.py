@@ -345,7 +345,7 @@ class BDFalsa:
     def _filtrar_historial(self, f):
         filas = self.historial
         if f.correo:
-            filas = [r for r in filas if f.correo.lower() in r["Correo"]]
+            filas = [r for r in filas if r["Correo"] and f.correo.lower() in r["Correo"]]
         if f.portal:
             filas = [r for r in filas if r["Portal"] == f.portal]
         if f.resultado:
@@ -420,6 +420,11 @@ class BDFalsa:
             "total": {"usuariosUnicos": unicos(filas), **self._agregados(filas)},
         }
 
+    def estadisticas_resumen_portal(self, portal, desde, hasta, correo=None):
+        self.llamadas_historial.append(("resumen_portal", portal, desde, hasta, correo))
+        filas = self._sesiones(portal, desde, hasta, correo)
+        return {"usuariosUnicos": len({r["Correo"] for r in filas if r["Correo"] is not None}), **self._agregados(filas)}
+
     def contar_usuarios_portal(self, portal, desde, hasta):
         self.llamadas_historial.append(("contar_usuarios", portal, desde, hasta))
         return len({r["Correo"] for r in self._sesiones(portal, desde, hasta) if r["Correo"] is not None})
@@ -437,9 +442,10 @@ class BDFalsa:
         return filas[:tope], len(filas) > tope
 
     # v16: misma lógica que db.estadisticas_series / db.estadisticas_distribucion.
-    def estadisticas_series(self, portal, desde, hasta, tz_offset_min):
-        self.llamadas_historial.append(("series", portal, desde, hasta, tz_offset_min))
-        filas = [r for r in self._sesiones(portal, desde, hasta) if r["Fecha"] is not None]
+    # v17: `correo` solo se anota en la llamada cuando viene (así las llamadas sin filtro quedan como en v16).
+    def estadisticas_series(self, portal, desde, hasta, tz_offset_min, correo=None):
+        self.llamadas_historial.append(("series", portal, desde, hasta, tz_offset_min) + ((correo,) if correo else ()))
+        filas = [r for r in self._sesiones(portal, desde, hasta, correo) if r["Fecha"] is not None]
         conocidos = [portal] if portal else list({r["Portal"] for r in self.historial if r["Portal"] is not None})
         grupos: dict = {}
         for r in filas:
@@ -471,9 +477,11 @@ class BDFalsa:
             return "No medida"
         return "Otro"
 
-    def estadisticas_distribucion(self, portal, desde, hasta, tz_offset_min):
-        self.llamadas_historial.append(("distribucion", portal, desde, hasta, tz_offset_min))
-        filas = self._sesiones(portal, desde, hasta)
+    def estadisticas_distribucion(self, portal, desde, hasta, tz_offset_min, correo=None):
+        self.llamadas_historial.append(
+            ("distribucion", portal, desde, hasta, tz_offset_min) + ((correo,) if correo else ())
+        )
+        filas = self._sesiones(portal, desde, hasta, correo)
         cierres = dict.fromkeys(db.TIPOS_CIERRE, 0)
         duracion = [0] * 5
         sin_actividad = sin_medir = 0
@@ -518,7 +526,7 @@ def bd(monkeypatch, iteraciones_rapidas):
         "crear_usuario", "actualizar_usuario", "eliminar_usuario", "marcar_invitacion_enviada",
         "listar_usuarios_con_acceso", "listar_historial", "resumen_historial",
         "estadisticas_portales", "estadisticas_usuarios", "contar_usuarios_portal",
-        "estadisticas_series", "estadisticas_distribucion",
+        "estadisticas_series", "estadisticas_distribucion", "estadisticas_resumen_portal",
         "latido_mirastock", "latido_energia", "cierre_mirastock", "cierre_energia",
         "latido_energia_llave", "cierre_energia_llave",
     ):

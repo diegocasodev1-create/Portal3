@@ -22,10 +22,10 @@ def revocar_admin(bd):
 PAGINAS = {
     "/": ("Portal de administración", 'href="/estadisticas"'),
     "/contactos": ("Centro Administración de contactos", 'id="tabla-cuerpo"'),
-    "/historial": ("Logs control de ingresos", '<script src="/static/historial.js?v=16"'),
-    "/estadisticas": ("Estadísticas del Portal Corporativo MiraGroup", '<script src="/static/estadisticas-inicio.js?v=16"'),
-    "/estadisticas/general": ("General por portal", '<script src="/static/estadisticas.js?v=16"'),
-    "/administradores": ("Centro de administración principal", '<script src="/static/administradores.js?v=16"'),
+    "/historial": ("Logs control de ingresos", '<script src="/static/historial.js?v=17"'),
+    "/estadisticas": ("Estadísticas del Portal Corporativo MiraGroup", '<script src="/static/estadisticas-inicio.js?v=17"'),
+    "/estadisticas/general": ("General por portal", '<script src="/static/estadisticas.js?v=17"'),
+    "/administradores": ("Centro de administración principal", '<script src="/static/administradores.js?v=17"'),
 }
 
 
@@ -521,8 +521,8 @@ def test_db_resumen_sin_latidos_promedio_nulo(cursor_falso):
 @pytest.mark.parametrize("ruta", PAGINAS)
 def test_paginas_con_cache_busting_v13(cliente_admin, ruta):
     texto = cliente_admin.get(ruta).text
-    assert 'href="/static/styles.css?v=16"' in texto
-    assert '.js"' not in texto and "?v=15" not in texto  # todo archivo local lleva ?v=16
+    assert 'href="/static/styles.css?v=17"' in texto
+    assert '.js"' not in texto and "?v=15" not in texto  # todo archivo local lleva ?v=17
 
 
 def test_historial_columnas_e_indicadores_de_sesion(cliente_admin):

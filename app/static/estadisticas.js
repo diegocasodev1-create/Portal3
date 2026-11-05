@@ -339,7 +339,8 @@
   }
 
   // Ejecuta `pedir` y avisa a los paneles; descarta respuestas viejas (otro rango o reintento).
-  async function cargarPaneles(vista, paneles, pedir) {
+  // `alFallar(e)` (opcional) recibe el error de la respuesta vigente (p. ej. 422 del buscador por correo).
+  async function cargarPaneles(vista, paneles, pedir, alFallar) {
     vista.pedido = (vista.pedido || 0) + 1;
     const actual = vista.pedido;
     paneles.forEach((p) => p.mostrar("carga"));
@@ -348,7 +349,10 @@
       return actual === vista.pedido ? datos : null;
     } catch (e) {
       // La tabla ya avisa los errores con un toast; aquí basta el estado de cada panel.
-      if (actual === vista.pedido) paneles.forEach((p) => p.mostrar("error", e.message));
+      if (actual === vista.pedido) {
+        paneles.forEach((p) => p.mostrar("error", e.message));
+        if (alFallar) alFallar(e);
+      }
       return null;
     }
   }
@@ -485,9 +489,95 @@
   // Gráficos de cada portal (genéricos: sirven para cualquier portal que devuelva la API)
   // -------------------------------------------------------------------------
 
+  // Buscador por correo de los gráficos (v17): texto aplicado recordado durante la sesión del navegador,
+  // una clave por portal (como las fechas). Las tablas de las pestañas tienen sus propios buscadores.
+  const CLAVE_CORREO = `mira.estadisticas.correo.portal.${SLUG}`;
+  const MAX_LARGO_CORREO = 256;
+  const SIN_COINCIDENCIAS = "Sin sesiones que coincidan con la búsqueda";
+
+  function leerCorreo() {
+    try {
+      const valor = (sessionStorage.getItem(CLAVE_CORREO) || "").trim();
+      return valor.length <= MAX_LARGO_CORREO ? valor : "";
+    } catch (e) {
+      return "";  // sin almacenamiento: los gráficos empiezan sin filtro
+    }
+  }
+
+  function guardarCorreo(valor) {
+    try {
+      if (valor) sessionStorage.setItem(CLAVE_CORREO, valor);
+      else sessionStorage.removeItem(CLAVE_CORREO);
+    } catch (e) { /* sin almacenamiento: el filtro no se recuerda */ }
+  }
+
+  // Devuelve [buscador, sección de gráficos]: el buscador va entre el filtro de fechas y las tarjetas.
   function graficosPortal(portal) {
     const color = G.colorPortal(portal);
     const reintentar = () => seccion.vista.cargar();
+
+    const idCorreo = nuevoId("correo");
+    const idErrorCorreo = nuevoId("error-correo");
+    const campoCorreo = el("input", {
+      type: "search", id: idCorreo, maxlength: String(MAX_LARGO_CORREO), placeholder: "Contiene…",
+      autocomplete: "off", "aria-describedby": idErrorCorreo,
+    });
+    const errorCorreo = el("p", { class: "error-campo", id: idErrorCorreo, role: "alert" });
+    const buscador = el("form", {
+      class: "subvista-filtros buscador-graficos", novalidate: true,
+      "aria-label": `Buscar por correo en los gráficos de ${portal}`,
+    }, [
+      el("div", { class: "campo campo-buscar" }, [el("label", { for: idCorreo, text: "Correo" }), campoCorreo, errorCorreo]),
+      el("div", { class: "barra-acciones" }, [
+        el("button", { type: "submit", class: "btn btn-primario btn-chico", text: "Buscar" }),
+      ]),
+    ]);
+    const textoFiltro = el("strong");
+    const quitar = el("button", {
+      type: "button", class: "filtro-quitar", "aria-label": "Quitar filtro", title: "Quitar filtro", text: "×",
+    });
+    const chip = el("p", { class: "filtro-activo", hidden: true }, [
+      el("span", { text: "Filtrado por: " }), textoFiltro, quitar,
+    ]);
+
+    // Texto aplicado con «Buscar» (o Enter): lo reusan el cambio de fechas y «Reintentar».
+    let buscado = leerCorreo();
+    campoCorreo.value = buscado;
+
+    function pintarFiltro() {
+      textoFiltro.textContent = buscado;
+      chip.hidden = !buscado;
+    }
+
+    function marcarErrorCorreo(mensaje) {
+      errorCorreo.textContent = mensaje || "";
+      if (mensaje) campoCorreo.setAttribute("aria-invalid", "true");
+      else campoCorreo.removeAttribute("aria-invalid");
+    }
+
+    function aplicarBusqueda(valor) {
+      const texto = valor.trim();
+      if (texto.length > MAX_LARGO_CORREO) {
+        marcarErrorCorreo(`El correo no puede superar los ${MAX_LARGO_CORREO} caracteres.`);
+        return;
+      }
+      marcarErrorCorreo("");
+      buscado = texto;
+      guardarCorreo(buscado);
+      pintarFiltro();
+      seccion.vista.cargar();
+    }
+
+    buscador.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      aplicarBusqueda(campoCorreo.value);
+    });
+    quitar.addEventListener("click", () => {
+      campoCorreo.value = "";
+      aplicarBusqueda("");
+      campoCorreo.focus();
+    });
+
     const tarjetas = el("div", { class: "indicadores graficos-tarjetas" });
     const panelDias = G.crearPanel({ titulo: "Sesiones y horas por día", ancho: "completo", alto: "alto", reintentar });
     const panelTop = G.crearPanel({ titulo: "Top 10 usuarios por horas", alto: "alto", reintentar });
@@ -500,20 +590,26 @@
 
     const seccion = seccionGraficos(() => true, async (vista) => {
       tarjetas.replaceChildren();
-      const conTz = (extra) => parametros({ portal, tz_offset_min: tzOffsetMin(), ...extra });
+      // Con filtro, las tarjetas salen de /resumen (usuarios únicos contados con el filtro); sin filtro,
+      // de la consulta de /portales que ya comparte la página.
+      const correo = buscado;
+      const filtros = (extra) => parametros({ portal, correo, ...extra });
+      const conTz = () => filtros({ tz_offset_min: tzOffsetMin() });
       const datos = await cargarPaneles(vista, paneles, () => Promise.all([
-        datosPortales(),
+        correo ? api("GET", `/api/estadisticas/resumen?${filtros()}`) : datosPortales(),
         api("GET", `/api/estadisticas/series?${conTz()}`),
         api("GET", `/api/estadisticas/distribucion?${conTz()}`),
-        api("GET", `/api/estadisticas/usuarios?${parametros({ portal })}`),
-      ]));
+        api("GET", `/api/estadisticas/usuarios?${filtros()}`),
+      ]), (e) => {
+        if (e.status === 422 && e.errores && e.errores.correo) marcarErrorCorreo(e.errores.correo);
+      });
       if (!datos) return;
-      const [portales, series, distribucion, usuarios] = datos;
-      const resumen = portales.portales.find((p) => p.portal === portal)
+      const [base, series, distribucion, usuarios] = datos;
+      const resumen = (correo ? base : base.portales.find((p) => p.portal === portal))
         || { usuariosUnicos: 0, sesiones: 0, segundosTotales: null, promedioSeg: null };
       G.tarjetas(tarjetas, resumen);
       if (!resumen.sesiones) {
-        paneles.forEach((p) => p.mostrar("vacio"));
+        paneles.forEach((p) => p.mostrar("vacio", correo ? SIN_COINCIDENCIAS : ""));
         return;
       }
       dibujarDias(series);
@@ -522,7 +618,8 @@
       dibujarDuracion(distribucion.duracion);
       G.mapaCalor(panelCalor, distribucion.calor, color);
     });
-    seccion.nodo.append(tarjetas, ...paneles.map((p) => p.nodo));
+    seccion.nodo.append(chip, tarjetas, ...paneles.map((p) => p.nodo));
+    pintarFiltro();
 
     function dibujarDias(s) {
       const p = s.portales[0] || { sesiones: s.dias.map(() => 0), segundos: s.dias.map(() => 0) };
@@ -656,7 +753,7 @@
       panelDuracion.pie(notas.length ? `Solo sesiones con tiempo medido. Aparte: ${notas.join(" · ")}.` : "");
     }
 
-    return seccion.nodo;
+    return [buscador, seccion.nodo];
   }
 
   // Color del texto principal (la línea de horas va en blanco para distinguirse de las barras del portal).
@@ -882,7 +979,7 @@
     const tablist = cuerpo.querySelector(".pestanas");
     tablist.setAttribute("aria-label", `Vistas del portal ${portal}`);
     const contenedor = cuerpo.querySelector(".subvistas");
-    tablist.before(graficosPortal(portal));
+    tablist.before(...graficosPortal(portal));
 
     const pestanas = SUBVISTAS.map((def, i) => {
       const idPanel = nuevoId("panel");
