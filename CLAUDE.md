@@ -8,7 +8,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
 
-## Current status (as of 2026-11-05; v17 and v18 deployed that day)
+## Current status (as of 2026-11-09; v19 deployed that day)
+
+### v19 (2026-11-09): «Consulta de base de datos» (read-only) — DEPLOYED
+- Asked for by the user. **1054 tests pass** (new `tests/test_consulta_bd.py`). JS checked with esprima. Static `?v=19`.
+- Fourth card on `/` («Consulta de base de datos», `card-menu`, database SVG icon). `.modulos` is now a 2 × 2 grid (1 column at ≤ 600 px; `.modulos-estadisticas` keeps its own 3/2/1 columns).
+- Read-only catalog reads approved by the user on 2026-11-09 (no row data): `sys.tables/columns/indexes/partitions` of the 20 tables (`StockLurinERI` has 45,008 rows, no PK, no index; `ContrataDireccion` no PK/date; 6 tables empty) and `sys.databases`: RCSI on, collation `SQL_Latin1_General_CP1_CI_AS`.
+- **User decision (2026-11-09): no separate DB user.** A `mira_consulta_lectura` user with column-level GRANTs was planned and then dropped by the user; the screen uses the app's own credentials (`db._cadena_conexion()`). No new env vars or secrets. The hidden columns are enforced only by the code catalog.
+- Details under "DB query" in Architecture. User decisions D1–D9 (2026-11-09) are encoded in `consulta_bd.TABLAS`: `StockLurinERI` `FechaCarga DESC, Llave`; `ContrataDireccion` alphabetical; `HistorialAccesos` `Fecha DESC, Id DESC`; `Solicitante`/`Usuario`/`Referencia` are searchable with their own name in the label; no JOINs; all dates treated as UTC (adjust per table in the catalog if one looks shifted); `Descargas.Token` hidden too; long texts cut to 300 chars + «…» in SQL.
+- The user reviewed `/consulta-bd` locally (prod data) and approved it on 2026-11-09.
+- Commit `e30e0a6`. Deployed on 2026-11-09 (~15:44 UTC) as image `mira-admin-app:v19`, revision `--0000020`.
+  - Checks: `/health` 200; `/login` 200 (serves `?v=19`); `/api/consulta-bd/tablas` without a session 401; `/consulta-bd` → 303 `/login?siguiente=/consulta-bd`; `/static/consulta-bd.js?v=19` 200; startup clean. `--0000020` has 100% of the traffic; `--0000019` (v18) was deprovisioning.
+  - Not done by Claude in Azure: a real login and opening `/consulta-bd` with data (needs the user's password).
+
 
 ### v18 (2026-11-05): MiraGroup logo, white sticky header, steel login + metallic menu cards — DEPLOYED
 - Asked for by the user. **938 tests pass** (new `tests/test_logo.py`). Static `?v=18` (images too).
@@ -228,7 +240,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Session of 2026-11-05 (closed): v17 → v18 in production
 - **v17** (`--0000018`, commit `c1d1f5d`): email search («contiene») for the cards and charts of each portal view (`GET /api/estadisticas/resumen`, `correo` in `/series` with portal and in `/distribucion`; `/series` with `correo` and no portal → 422), plus a visual refresh (dark gradient background with cyan/gold glows, cards with gradient/shadow/glow, buttons with glow).
 - **v18** (`--0000019`, commit `67307d8`): MiraGroup logo from `app/media/logo2.jpg` (`app/static/img/logo-miragroup.png` + `@2x`; `logoMG.png` deleted), white sticky header with blue buttons, login as a polished steel bar, metallic menu cards on `/`.
-- Docs commits `c45a669` (v17 state), `b3abd00` (v18 state) and this closing commit, all pushed to `origin/main`. **940 tests pass.** Static files at `?v=18`; the next image is **v19**.
+- Docs commits `c45a669` (v17 state), `b3abd00` (v18 state) and the closing commit `ca90c0a`, all pushed to `origin/main`. **940 tests pass.** Static files at `?v=18`; the next image was **v19**.
 - Claude did not log in to Azure in this session (needs the user's password): every visual check there is PENDIENTES 1.
 - To regenerate the logo: Pillow is NOT in `requirements*.txt`; install it into a scratch dir (`pip install --target <dir> Pillow`) and redo the conversion described under v18 (logo pixels opaque, only the white background and grey shadow to alpha; crop; 240/480 px). `app/media/` (the originals) exists only on the user's machine: it is in `.gitignore` and `.dockerignore`.
 
@@ -240,7 +252,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Commits from `41f3292` (v13) to the closing commit of this session, all pushed to `origin/main`. **866 tests pass.** Static files at `?v=16`; the next image is **v17**.
 
 ### PENDIENTES (next session)
-1. **Verify v16–v18 in Azure with the user's login** (Claude has not logged in to Azure):
+1. **Verify v16–v19 in Azure with the user's login** (Claude has not logged in to Azure):
+   - v19: the fourth card (2 × 2 grid, 1 column on a phone), `/consulta-bd` with a few tables (StockLurinERI search by SKU, a table without search, long texts, dates in local time, sticky header and horizontal scroll).
    - v18: logo in the header of every page, white sticky header over the charts and under the modals, blue header buttons, steel login (including an error message), metallic menu cards, phone width.
    - v17: the email search in a portal view (cards, charts and Top 10 filtered; chip «Filtrado por»; no match; remembered per portal), the dark background, cards and buttons.
    - v16: `/estadisticas` (cards), `/estadisticas/general` and a portal view with real data (charts, tables, tabs, date filter per view).
@@ -252,6 +265,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Start with **PENDIENTES** above. The older items below are still open unless noted.
 - **v12 deployed on 2026-10-30.** Ask the user whether login, password change and `/administradores` work in Azure (Claude did not log in there). Each admin with the default password must change it within 72 h.
 - **Session closed on 2026-10-30** after the v12 deploy; commits `13e114b` (v12 code), `77f756e` (docs) and its closing commit were pushed to `origin/main`.
+- **v19 deployed on 2026-11-09** (`--0000020`): see v19 and PENDIENTES 1.
 - **Session closed on 2026-11-05** after the v18 deploy (`--0000019`): see "Session of 2026-11-05" and PENDIENTES 1.
 - **v16 deployed on 2026-11-03** (`--0000017`): see PENDIENTES 1.
 - **v15 deployed on 2026-11-03** (`--0000016`). With the user's OK (prod read), check in `/historial` that new MiraStock/Energía sessions no longer get inflated by late heartbeats, and that MiraStock users are not cut off from the agent after 30 min while active (key renewal).
@@ -270,7 +284,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Deployment
 - URL: https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io
 - Revision mode `Single`: traffic follows the latest revision, and no older one is kept for rollback.
-- **Running: image v18, revision `ca-mira-admin--0000019`, with own login (always on), `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~13:46 UTC on 2026-11-05. `/health` is OK and startup was clean. It has 100% of the traffic; `--0000018` (v17) was deprovisioning right after the deploy. `ENERGIA_PORTAL_URL`, `LATIDO_ORIGINS`, `PORTAL_BASE_URL` and `TOKEN_AUDIENCE` are not set in Azure, so the code defaults apply. The next image is **v19** (static files are at `?v=18`; bump to `?v=19` if they change).
+- **Running: image v19, revision `ca-mira-admin--0000020`, with own login (always on), `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~15:44 UTC on 2026-11-09. `/health` is OK and startup was clean. It has 100% of the traffic; `--0000019` (v18) was deprovisioning right after the deploy. `ENERGIA_PORTAL_URL`, `LATIDO_ORIGINS`, `PORTAL_BASE_URL` and `TOKEN_AUDIENCE` are not set in Azure, so the code defaults apply. The next image is **v20** (static files are at `?v=19`; bump to `?v=20` if they change).
 - Image history:
   - v3: auth off.
   - v4: External ID + PDF attachment.
@@ -288,6 +302,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - v16: charts in `/estadisticas` (Chart.js 4.4.7 hosted), `/api/estadisticas/series` + `/distribucion`, cards home + `/estadisticas/general` and `/estadisticas/portal/<slug>`, `slug` in `/portales`, `?v=16` (`--0000017`).
   - v17: email search for the charts of each portal (`/api/estadisticas/resumen`, `correo` in `/series` and `/distribucion`) + visual refresh (background, cards, buttons), `?v=17` (`--0000018`).
   - v18: MiraGroup logo (`app/static/img/`), white sticky header with blue buttons, steel login, metallic menu cards, `?v=18` (`--0000019`).
+  - v19: «Consulta de base de datos» (`/consulta-bd`, `/api/consulta-bd/*`, 20 tables, read-only, app connection), fourth menu card + 2 × 2 grid, `?v=19` (`--0000020`).
 - **az CLI** is logged in to both tenants (`e3112796-…` workforce/subscription, `cb938793-…` External ID), and the active one can switch. Before az commands on Azure resources, run `az account set --subscription 38b3f030-c7b5-4d38-822b-c533f88cd34a`.
 - Logs older than the current replica (it scales to 0): Log Analytics workspace `d8a192a1-91f6-4add-882c-d1396d044ba0`, table `ContainerAppConsoleLogs_CL`, via `az monitor log-analytics query`. The app logs the user Id and the External ID account id, never the email.
 
@@ -324,7 +339,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Verified:
   - The portal public key loads (local and Azure).
   - `/health`, the no-session page, and the 401/404 checks pass.
-  - **940 tests pass** (v18, locally; `tests/test_sin_auth.py` no longer exists).
+  - **1054 tests pass** (v19, locally; `tests/test_sin_auth.py` no longer exists).
   - v11 statistics match independent SQL on the production view (2026-10-30).
   - Code-only sign-in with a federated/mail account works.
   - Welcome emails arrive at other domains (per the user).
@@ -412,7 +427,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - CORS: custom `cors_latido` middleware for this route only. Origins from `LATIDO_ORIGINS` (normalized: lowercase, no trailing slash), POST only, header Content-Type, no credentials, Max-Age 600. A preflight or POST with a disallowed Origin → 403. No Origin → processed.
   - Never log `t` or the token (rejections are logged at DEBUG with the reason only). `main._SinLatidos` filters `/api/latido` out of `uvicorn.access`.
   - Tests: `BDFalsa.latido_*` reproduce the SQL rules with `bd.ahora`; `crear_token_energia` + autouse fixture `clave_de_energia` (`estado["error"]` simulates the key being unavailable).
-- **Static cache busting:** pages reference `/static/*.css|js?v=18` (and the logo images, v18). Bump it on every release that changes static files.
+- **Static cache busting:** pages reference `/static/*.css|js?v=19` (and the logo images). Bump it on every release that changes static files.
 - **Explicit close (v9):** optional `"cierre"` in `/api/latido`, which must be a real bool (`type(x) is bool`; anything else → 400, `false` = normal heartbeat).
   - MiraStock: `db.cierre_mirastock` sets FinalSesion, `CierreExplicito = 1`, and `ExpiraEn = now` if it was in the future (the key is revoked). No 60 s rule, and never on an already closed session or one that is no longer alive (v15). Normal heartbeats add `COALESCE(CierreExplicito, 0) = 0`.
   - Energía: `_SQL_ENERGIA_INICIO` picks the latest row in the window (no closed filter) with `UPDLOCK, HOLDLOCK`. `UPDATE ... OUTPUT deleted.* INTO @previa` captures its prior state.
@@ -433,6 +448,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - Endpoints: `GET /api/historial` → `{filas, total, pagina, tamano, paginas}` (Fecha as `...Z`); `/api/historial/resumen` → `{total, usuariosUnicos, porPortal, denegados, porDia}`; `/api/historial/csv` → BOM + `;` + CRLF, Fecha `AAAA-MM-DD hh:mm:ss` UTC, cells starting with `= + - @ \t \r` get a `'`, filename `historial_accesos_AAAAMMDD.csv`, cap `TOPE_CSV_HISTORIAL` = 50,000 (more → header `X-Historial-Truncado`).
   - `historial.js`: default last 7 days; local days → UTC (`hasta` = next day 00:00 local); `tz_offset_min = -getTimezoneOffset()`. CSS bar chart (bar heights set via `element.style`, which the CSP allows); zero-filled up to 92 days, labels up to 31. The CSV is downloaded with fetch + blob, so 401/422 show in the UI and truncation shows a warning toast.
   - Tests: `BDFalsa.historial` + `agregar_acceso()` in `conftest.py`, and `llamadas_historial` records the filters received. `test_historial.py` also checks the SQL text and params of `db.py` with a fake cursor.
+- **DB query (`/consulta-bd`, v19, read-only):**
+  - `app/consulta_bd.py`: `TABLAS` (closed list of 20 `core` tables; key = table name without schema) with explicit columns + type (`texto`, `textoLargo` = capacity > 300 chars, `entero`, `decimal`, `bit`, `fechaHora`, `fecha`, `guid`), a fixed `orden` fragment and the `busqueda` columns. Columns are hardcoded (taken from the 2026-11-09 catalog read), never discovered at runtime: a new DB column does not show until it is added here; a renamed/dropped one makes that table answer 503.
+  - Never selected: `AdministradoresPortal.ContrasenaHash/ContrasenaSal`, `Token` of `HistorialAccesos`, `SesionesAgente` and `Descargas` (tests check the catalog and every SQL string).
+  - `SQL` is built at import from the catalog only: `SELECT COUNT_BIG(*)` (+ the same with WHERE), `SELECT TOP (500) … ORDER BY <orden>`; `textoLargo` → `CASE WHEN LEN(c) > 300 THEN LEFT(c, 300) + N'…' ELSE c END`; search = `([c1] LIKE ? ESCAPE '\' OR …)` with `db._escapar_like` and the same `%texto%` param per column (no lowercasing: CI collation).
+  - Connection `_conexion_consulta`: `db._cadena_conexion()` (app credentials), `autocommit=True`, `readonly=True`, `conn.timeout = 20`. RCSI is on, so it does not block writers.
+  - `valor_json`: datetimes → ISO `…Z` (seconds), `date` → `AAAA-MM-DD`, decimals → string without trailing zeros, bits → bool.
+  - Endpoints (`require_admin`): `GET /api/consulta-bd/tablas` → `{tope, tablas: [{clave, nombre, camposBusqueda}]}` (no DB); `GET /api/consulta-bd/filas?tabla=&q=` → `{tabla, clave, columnas: [{nombre, tipo}], camposBusqueda, busqueda, tope, mostrando, total, totalTabla, filas: [[…]]}`. 422 on `tabla` (missing/unknown, exact case) and `q` (> 100 chars, or a table without search); pyodbc errors → 503. The log has the table and row count, never `q`.
+  - `consulta-bd.html` + `consulta-bd.js` (uses `comun.js`): table `<select>` (last one in `sessionStorage` `mira.consultaBd.tabla`), search form hidden when the table has no search columns, label «Buscar en: …», counter «Mostrando N de TOTAL registros» / «… coincidencias con «x» · T registros en la tabla», `.tabla-bd` (not `.tabla`, so it stays a table on phones) inside `.tabla-bd-envoltura` (`overflow: auto`, sticky `th` with opaque `#0c1d38`). Dates in local time with seconds, NULL «—» (`.celda-nula`), bits «Sí»/«No». Built with `textContent` only (a test forbids `innerHTML`).
+  - Tests: `tests/test_consulta_bd.py` (fixture `lectura` fakes `_conexion_consulta` with `CursorBD`).
 - **Statistics pages (v16):**
   - `/estadisticas` (`estadisticas.html` + `estadisticas-inicio.js`, no Chart.js): cards «General por portal» + one per portal from `/api/estadisticas/portales` (last 30 days), with `--color-portal` set via `style.setProperty` (CSSOM). Grid `.modulos-estadisticas`: 3 / 2 (≤ 900 px) / 1 (≤ 600 px) columns.
   - `/estadisticas/general` (`estadisticas-general.html`, `<body data-vista="general">`) and `/estadisticas/portal/{slug}` (`estadisticas-portal.html`, `data-vista="portal"`), both through `_pagina_protegida` (which now takes `status_code`). A slug that does not match `_SLUG_VALIDO` (`[a-z0-9]+(-[a-z0-9]+)*`, ≤ `MAX_LARGO_SLUG` = 64) → the same page with 404; a valid unknown slug → 200 and the page shows `#portal-no-encontrado`.
@@ -483,7 +507,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - It swaps `app.db` and `mailer.enviar_bienvenida` for in-memory fakes and signs tokens with throwaway RSA keys.
   - The TestClient uses `https://testserver`. Cookies set manually need `domain="testserver.local"`.
 - JS syntax check: there is no Node on this machine. Use esprima from a scratch target dir: `pip install --target <dir> esprima==4.0.1`, then `esprima.parseScript(...)`.
-- Deploy a new version (always a new tag; v19 is next; bump `?v=` in the HTML, now `?v=18`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
+- Deploy a new version (always a new tag; v20 is next; bump `?v=` in the HTML, now `?v=19`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
 - Azure layout:
   - `ca-mira-admin` is in `RG-COPILOT-DEV`, East US, with 0.25 vCPU, 0.5 Gi and 0–1 replicas.
   - It reuses environment `managedEnvironment-rgscripth25prod-818f` and ACR `acrscripth25prod`, both in `rg-script-h25-prod`.
