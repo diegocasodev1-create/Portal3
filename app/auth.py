@@ -173,16 +173,23 @@ def huella(hash_: bytes) -> str:
     return hmac.new(secreto, b"huella-contrasena:" + hash_, hashlib.sha256).hexdigest()[:32]
 
 
-def datos_sesion(admin: dict) -> dict:
-    return {"id": admin["Id"], "h": huella(admin["ContrasenaHash"])}
+# v20: tope absoluto desde el ingreso, aunque haya actividad (la inactividad sigue en SESSION_MAX_AGE_MIN).
+DURACION_MAXIMA_SESION_S = 12 * 60 * 60
+
+
+def datos_sesion(admin: dict, inicio: int | None = None) -> dict:
+    """{id, h, i}: `i` es el momento del ingreso (epoch en segundos). Al renovar la cookie se conserva."""
+    return {"id": admin["Id"], "h": huella(admin["ContrasenaHash"]), "i": int(time.time()) if inicio is None else inicio}
 
 
 def crear_cookie_sesion(response: Response, datos: dict) -> None:
     s = get_settings()
+    # La cookie nunca dura más allá del tope absoluto de la sesión.
+    restante = datos["i"] + DURACION_MAXIMA_SESION_S - int(time.time())
     response.set_cookie(
         COOKIE_SESION,
         _serializador().dumps(datos),
-        max_age=s.session_max_age_s,
+        max_age=max(0, min(s.session_max_age_s, restante)),
         path="/",
         httponly=True,
         secure=True,
@@ -195,7 +202,8 @@ def borrar_cookie_sesion(response: Response) -> None:
 
 
 def leer_sesion(request: Request) -> dict | None:
-    """Devuelve {id, h} si la cookie es válida y no venció por inactividad. No consulta la BD."""
+    """Devuelve {id, h, i} si la cookie es válida, no venció por inactividad y no pasó el tope absoluto
+    de 12 h desde el ingreso. No consulta la BD. Una cookie sin `i` (anterior a v20) no sirve."""
     valor = request.cookies.get(COOKIE_SESION)
     if not valor:
         return None
@@ -205,11 +213,14 @@ def leer_sesion(request: Request) -> dict | None:
         return None
     if not isinstance(datos, dict):
         return None
-    admin_id, h = datos.get("id"), datos.get("h")
+    admin_id, h, inicio = datos.get("id"), datos.get("h"), datos.get("i")
     # bool es subclase de int: se descarta explícitamente.
-    if type(admin_id) is not int or not isinstance(h, str) or not h:
+    if type(admin_id) is not int or not isinstance(h, str) or not h or type(inicio) is not int:
         return None
-    return {"id": admin_id, "h": h}
+    ahora = time.time()
+    if inicio > ahora + _TOLERANCIA_RELOJ_S or ahora - inicio >= DURACION_MAXIMA_SESION_S:
+        return None
+    return {"id": admin_id, "h": h, "i": inicio}
 
 
 def admin_de_sesion(sesion: dict | None) -> dict | None:
@@ -340,6 +351,9 @@ class LimitePorIp:
 
 
 limite_intentos = LimitePorIp(maximo=20, ventana_s=15 * 60)
+# v20: /api/latido es público. Cada usuario late cada 2 min: 60 por minuto alcanzan para ~120 usuarios detrás
+# de una misma IP (NAT de una oficina).
+limite_latidos = LimitePorIp(maximo=60, ventana_s=60)
 
 
 def ip_cliente(request: Request) -> str:

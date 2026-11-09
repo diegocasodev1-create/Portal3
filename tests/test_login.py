@@ -95,9 +95,10 @@ def test_login_exige_csrf(cliente, bd):
 def test_contrasena_muy_larga_no_se_calcula(cliente, bd, monkeypatch):
     llamadas = []
     original = claves.calcular
-    monkeypatch.setattr(claves, "calcular", lambda *a: llamadas.append(a[0]) or original(*a))
+    monkeypatch.setattr(claves, "calcular", lambda *a: llamadas.append((a[0], len(a[1]), a[2])) or original(*a))
     assert ingresar(cliente, contrasena="A" * 5000).status_code == 401
-    assert llamadas == []  # verificar descarta > 128 caracteres sin calcular
+    # verificar no calcula el hash real de > 128 caracteres; v20: solo el de relleno (recortado), para igualar el tiempo.
+    assert llamadas == [("PBKDF2_SHA256", 128, claves._SAL_RELLENO)]
     assert bd.admins[1]["IntentosFallidos"] == 1
 
 
@@ -163,7 +164,7 @@ def test_sql_del_fallo_y_del_exito(monkeypatch):
     # No suma intentos mientras está bloqueado; un bloqueo vencido empieza la cuenta en 1.
     assert "WHERE Id = ? AND (BloqueadoHasta IS NULL OR BloqueadoHasta <= SYSUTCDATETIME())" in sql
     assert "WHEN BloqueadoHasta <= SYSUTCDATETIME() THEN 1" in sql
-    assert "DATEADD(HOUR, 72, COALESCE(FechaCambioContrasena, FechaAlta))" in db._COLUMNAS_ADMIN
+    assert "DATEADD(HOUR, 24, COALESCE(FechaCambioContrasena, FechaAlta))" in db._COLUMNAS_ADMIN  # v20
 
 
 def test_sql_de_exito_migracion_y_cambio(monkeypatch):
@@ -212,8 +213,10 @@ def test_por_defecto_entra_y_debe_cambiarla(cliente, bd):
     assert bd.admins[aid]["AlgoritmoHash"] == "SHA2_512"
 
 
-def test_por_defecto_vence_a_las_72_horas(cliente, bd):
-    aid = admin_por_defecto(bd, fecha_alta=bd.ahora - timedelta(hours=73))
+def test_por_defecto_vence_a_las_24_horas(cliente, bd):
+    # v20: antes 72 h.
+    assert db.HORAS_CONTRASENA_POR_DEFECTO == 24
+    aid = admin_por_defecto(bd, fecha_alta=bd.ahora - timedelta(hours=25))
     resp = ingresar(cliente, correo="nuevo.admin@miragroup.cl", contrasena=POR_DEFECTO)
     assert resp.status_code == 401
     assert "venció" in resp.json()["detail"]
@@ -326,7 +329,7 @@ def test_puede_ver_su_nombre_y_la_pagina_de_cambio(cliente_por_defecto):
     assert cliente_por_defecto.get("/api/me").json()["debeCambiarContrasena"] is True
     resp = cliente_por_defecto.get("/cambiar-contrasena")
     assert resp.status_code == 200
-    assert 'id="form-cambio"' in resp.text and '<script src="/static/cambiar.js?v=19"' in resp.text
+    assert 'id="form-cambio"' in resp.text and '<script src="/static/cambiar.js?v=20"' in resp.text
 
 
 def cambiar(cliente, actual=POR_DEFECTO, nueva=NUEVA, confirmacion=None):

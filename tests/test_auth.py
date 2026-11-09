@@ -54,7 +54,7 @@ def test_login_es_publico(cliente):
     resp = cliente.get("/login")
     assert resp.status_code == 200
     assert 'id="form-ingreso"' in resp.text
-    assert '<script src="/static/login.js?v=19"' in resp.text
+    assert '<script src="/static/login.js?v=20"' in resp.text
 
 
 def test_cambiar_contrasena_sin_sesion_redirige(cliente):
@@ -108,8 +108,9 @@ def test_cookie_de_sesion_tiene_los_atributos_seguros(cliente, bd):
 def test_cookie_no_trae_el_correo_ni_el_hash(cliente, bd):
     valor = ingresar(cliente).cookies[auth.COOKIE_SESION]
     datos = auth._serializador().loads(valor)
-    assert set(datos) == {"id", "h"}
+    assert set(datos) == {"id", "h", "i"}
     assert datos["id"] == 1
+    assert abs(datos["i"] - time.time()) < 60  # v20: hora de ingreso (tope absoluto de 12 h)
     assert bd.admins[1]["ContrasenaHash"].hex() not in datos["h"]
 
 
@@ -251,8 +252,8 @@ def test_paginas_con_contrasenas_cargan_comun_js_primero(cliente, bd, ruta, prop
         from tests.conftest import poner_sesion
         poner_sesion(cliente, bd.admins[1])
     texto = cliente.get(ruta).text
-    comun = texto.index('<script src="/static/comun.js?v=19" defer></script>')
-    assert comun < texto.index(f'<script src="/static/{propio}?v=19" defer></script>')
+    comun = texto.index('<script src="/static/comun.js?v=20" defer></script>')
+    assert comun < texto.index(f'<script src="/static/{propio}?v=20" defer></script>')
     assert texto.count('type="password"') == campos
 
 

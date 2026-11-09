@@ -271,7 +271,11 @@ class BDFalsa:
         if s["FinalSesion"] is not None and s["FinalSesion"] >= self.ahora - timedelta(seconds=60):
             return False
         s["FinalSesion"] = self.ahora
-        s["ExpiraEn"] = max(s["ExpiraEn"], self.ahora + timedelta(minutes=30))  # renueva, nunca acorta
+        # Renueva a ahora + 30 min, nunca acorta, nunca pasa de CreadoEn + 4 h (v20) y no revive una llave vencida.
+        if s["ExpiraEn"] > self.ahora:
+            tope = min(self.ahora + timedelta(minutes=30),
+                       s["CreadoEn"] + timedelta(hours=db.HORAS_MAXIMAS_LLAVE_MIRASTOCK))
+            s["ExpiraEn"] = max(s["ExpiraEn"], tope)
         return True
 
     def cierre_mirastock(self, token):
@@ -510,10 +514,12 @@ def iteraciones_rapidas(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def sin_limite_previo():
-    """Cada test empieza sin intentos registrados en el límite por IP."""
+    """Cada test empieza sin intentos registrados en los límites por IP (login y latidos)."""
     auth.limite_intentos.limpiar()
+    auth.limite_latidos.limpiar()
     yield
     auth.limite_intentos.limpiar()
+    auth.limite_latidos.limpiar()
 
 
 @pytest.fixture

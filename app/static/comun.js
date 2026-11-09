@@ -280,10 +280,10 @@ window.Mira = (() => {
   }
 
   // -------------------------------------------------------------------------
-  // Política de contraseñas (las mismas reglas que app/claves.py; la API vuelve a validar)
+  // Política de contraseñas (las mismas reglas que app/claves.py; la API vuelve a validar).
+  // v20: la regla «distinta de la contraseña por defecto» la valida solo el servidor (no se publica aquí).
   // -------------------------------------------------------------------------
 
-  const CONTRASENA_POR_DEFECTO = "Admin@123456";
   const REGLAS_CONTRASENA = [
     ["largo", "La contraseña debe tener al menos 10 caracteres.", (c) => c.length >= 10],
     ["mayuscula", "La contraseña debe tener al menos una mayúscula.", (c) => /[A-ZÁÉÍÓÚÑÜ]/.test(c)],
@@ -297,7 +297,6 @@ window.Mira = (() => {
     if (nueva.length > 128) return "La contraseña no puede superar 128 caracteres.";
     const falla = REGLAS_CONTRASENA.find(([, , cumple]) => !cumple(nueva));
     if (falla) return falla[1];
-    if (nueva === CONTRASENA_POR_DEFECTO) return "No puedes usar la contraseña por defecto.";
     if (actual && nueva === actual) return "La contraseña nueva debe ser distinta de la actual.";
     return "";
   }
@@ -309,7 +308,7 @@ window.Mira = (() => {
       if (li) li.classList.toggle("cumple", cumple(nueva));
     }
     const distinta = lista.querySelector('[data-regla="distinta"]');
-    if (distinta) distinta.classList.toggle("cumple", nueva !== "" && nueva !== CONTRASENA_POR_DEFECTO && nueva !== actual);
+    if (distinta) distinta.classList.toggle("cumple", nueva !== "" && nueva !== actual);
   }
 
   // -------------------------------------------------------------------------

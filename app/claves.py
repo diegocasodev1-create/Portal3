@@ -36,7 +36,14 @@ def calcular(algoritmo: str, clave: str, sal: bytes) -> bytes:
 
 
 def verificar(algoritmo: str, clave: str, sal: bytes, esperado: bytes) -> bool:
-    """True si la clave corresponde al hash guardado. Un algoritmo desconocido nunca verifica."""
+    """True si la clave corresponde al hash guardado. Un algoritmo desconocido nunca verifica.
+
+    v20: siempre cuesta lo mismo que un PBKDF2 (también con SHA2_512, un algoritmo desconocido o una clave
+    vacía o demasiado larga). Si no, el tiempo de respuesta del login delataría a los administradores
+    creados o restablecidos por SQL, que tienen la contraseña por defecto pendiente de cambio.
+    """
+    if not clave or len(clave) > LARGO_MAXIMO or not sal or not esperado or algoritmo != ALGORITMO_APP:
+        gastar_tiempo(clave)
     if not clave or len(clave) > LARGO_MAXIMO or not sal or not esperado:
         return False
     try:

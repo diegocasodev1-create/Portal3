@@ -1,4 +1,8 @@
 .env
+.env.*
+!.env.example
+# Payload local del PATCH a Graph (2026-10-23); nunca al repo
+body.json
 __pycache__/
 *.pyc
 .venv/

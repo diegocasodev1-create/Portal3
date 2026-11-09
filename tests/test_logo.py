@@ -9,8 +9,8 @@ import pytest
 APP = Path(__file__).resolve().parent.parent / "app"
 PAGINAS = sorted((APP / "static").glob("*.html")) + [APP / "templates" / "error.html"]
 LOGO = (
-    '<img src="/static/img/logo-miragroup.png?v=19" srcset="/static/img/logo-miragroup.png?v=19 1x, '
-    '/static/img/logo-miragroup@2x.png?v=19 2x" width="240" height="73" alt="MiraGroup" class="logo">'
+    '<img src="/static/img/logo-miragroup.png?v=20" srcset="/static/img/logo-miragroup.png?v=20 1x, '
+    '/static/img/logo-miragroup@2x.png?v=20 2x" width="240" height="73" alt="MiraGroup" class="logo">'
 )
 
 
@@ -18,8 +18,10 @@ LOGO = (
 def test_todas_las_paginas_usan_el_logo_nuevo(pagina):
     texto = pagina.read_text(encoding="utf-8")
     assert "logoMG" not in texto
-    imagenes = re.findall(r"<img [^>]*>", texto)
+    imagenes = [i for i in re.findall(r"<img [^>]*>", texto) if 'class="logo' in i]
     assert imagenes and all(i == LOGO for i in imagenes)
+    # v20: las otras imágenes son solo los íconos del menú de inicio.
+    assert all("/static/img/icono-" in i for i in re.findall(r"<img [^>]*>", texto) if i not in imagenes)
     assert 'style="' not in texto
 
 

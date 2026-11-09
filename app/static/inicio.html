@@ -7,15 +7,15 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/styles.css?v=19">
-  <script src="/static/comun.js?v=19" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=20">
+  <script src="/static/comun.js?v=20" defer></script>
 </head>
 <body>
   <a class="saltar" href="#contenido">Saltar al contenido</a>
 
   <header class="encabezado">
     <div class="marca">
-      <img src="/static/img/logo-miragroup.png?v=19" srcset="/static/img/logo-miragroup.png?v=19 1x, /static/img/logo-miragroup@2x.png?v=19 2x" width="240" height="73" alt="MiraGroup" class="logo">
+      <img src="/static/img/logo-miragroup.png?v=20" srcset="/static/img/logo-miragroup.png?v=20 1x, /static/img/logo-miragroup@2x.png?v=20 2x" width="240" height="73" alt="MiraGroup" class="logo">
       <h1>Portal de administración</h1>
     </div>
     <div class="sesion">
@@ -28,36 +28,25 @@
     <h2 class="sr-only">Módulos</h2>
     <div class="modulos">
       <a class="card card-modulo card-menu" href="/estadisticas">
-        <svg class="modulo-icono" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
+        <img class="modulo-icono" src="/static/img/icono-estadisticas.png?v=20" srcset="/static/img/icono-estadisticas.png?v=20 1x, /static/img/icono-estadisticas@2x.png?v=20 2x" width="88" height="88" alt="" decoding="async">
         <span class="modulo-titulo">Estadísticas del Portal Corporativo MiraGroup</span>
         <span class="modulo-texto">Usuarios, sesiones y horas de uso de cada portal, con el detalle de cada ingreso y exportación a Excel.</span>
         <span class="modulo-ir" aria-hidden="true">Entrar <span class="modulo-flecha">→</span></span>
       </a>
       <a class="card card-modulo card-menu" href="/contactos">
-        <svg class="modulo-icono" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM20 20v-1.5a3.5 3.5 0 0 0-2.5-3.35M15.5 4.15a3.5 3.5 0 0 1 0 6.7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+        <img class="modulo-icono" src="/static/img/icono-contactos.png?v=20" srcset="/static/img/icono-contactos.png?v=20 1x, /static/img/icono-contactos@2x.png?v=20 2x" width="88" height="88" alt="" decoding="async">
         <span class="modulo-titulo">Centro Administración de contactos</span>
         <span class="modulo-texto">Crea, edita y elimina usuarios, define sus portales habilitados y envía el correo de bienvenida.</span>
         <span class="modulo-ir" aria-hidden="true">Entrar <span class="modulo-flecha">→</span></span>
       </a>
       <a class="card card-modulo card-menu" href="/administradores">
-        <svg class="modulo-icono" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M12 3 4 6v5c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V6l-8-3ZM9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+        <img class="modulo-icono" src="/static/img/icono-administradores.png?v=20" srcset="/static/img/icono-administradores.png?v=20 1x, /static/img/icono-administradores@2x.png?v=20 2x" width="88" height="88" alt="" decoding="async">
         <span class="modulo-titulo">Centro de administración principal</span>
         <span class="modulo-texto">Administradores de este portal: último acceso, estado y edición de nombre, correo y contraseña.</span>
         <span class="modulo-ir" aria-hidden="true">Entrar <span class="modulo-flecha">→</span></span>
       </a>
       <a class="card card-modulo card-menu" href="/consulta-bd">
-        <svg class="modulo-icono" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <ellipse cx="12" cy="5" rx="8" ry="3"/>
-            <path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>
-          </g>
-        </svg>
+        <img class="modulo-icono" src="/static/img/icono-consulta-bd.png?v=20" srcset="/static/img/icono-consulta-bd.png?v=20 1x, /static/img/icono-consulta-bd@2x.png?v=20 2x" width="88" height="88" alt="" decoding="async">
         <span class="modulo-titulo">Consulta de base de datos</span>
         <span class="modulo-texto">Últimos registros de las tablas del portal, con búsqueda por SKU, correo o ticket JIRA. Solo lectura.</span>
         <span class="modulo-ir" aria-hidden="true">Entrar <span class="modulo-flecha">→</span></span>
@@ -68,7 +57,7 @@
   <!-- Pantalla de sesión vencida -->
   <div class="bloqueo" id="bloqueo" hidden>
     <div class="card card-aviso" role="alertdialog" aria-modal="true" aria-labelledby="bloqueo-titulo" aria-describedby="bloqueo-texto">
-      <img src="/static/img/logo-miragroup.png?v=19" srcset="/static/img/logo-miragroup.png?v=19 1x, /static/img/logo-miragroup@2x.png?v=19 2x" width="240" height="73" alt="MiraGroup" class="logo">
+      <img src="/static/img/logo-miragroup.png?v=20" srcset="/static/img/logo-miragroup.png?v=20 1x, /static/img/logo-miragroup@2x.png?v=20 2x" width="240" height="73" alt="MiraGroup" class="logo">
       <h2 id="bloqueo-titulo">Tu sesión venció</h2>
       <p id="bloqueo-texto">Por seguridad, vuelve a ingresar con tu correo y contraseña.</p>
       <a class="btn btn-primario" href="/login" id="bloqueo-link">Ingresar</a>

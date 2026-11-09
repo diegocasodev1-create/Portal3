@@ -348,14 +348,19 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
   display: flex; flex-direction: column; gap: 10px;
   padding: 28px 26px; color: var(--texto); text-decoration: none;
 }
+/* v20: íconos 3D (PNG con fondo transparente y sombra propia) sin recuadro; 88 px (72 px en celular).
+   El margen negativo compensa el aire transparente que trae cada imagen alrededor del dibujo. */
 .modulo-icono {
-  width: 44px; height: 44px; padding: 9px; margin-bottom: 6px;
-  color: var(--acento); border: 1px solid var(--borde); border-radius: 14px; background: rgba(41, 184, 236, 0.08);
-  transition: filter var(--transicion), border-color var(--transicion), background-color var(--transicion);
+  display: block; width: 88px; height: 88px; margin: -8px 0 0 -8px;
+  object-fit: contain;
+  transition: transform var(--transicion), filter var(--transicion);
 }
 .card-modulo:hover .modulo-icono, .card-modulo:focus-visible .modulo-icono {
-  border-color: var(--brillo); background-color: rgba(41, 184, 236, 0.16);
-  filter: drop-shadow(0 0 6px var(--brillo-suave));
+  transform: translateY(-3px) scale(1.06);
+  filter: drop-shadow(0 0 10px var(--brillo-suave));
+}
+@media (max-width: 600px) {
+  .modulo-icono { width: 72px; height: 72px; margin: -6px 0 0 -6px; }
 }
 .modulo-titulo {
   font-size: clamp(1.3rem, 1rem + 1.4vw, 1.85rem); font-weight: 700; line-height: 1.2; letter-spacing: 0.005em;
@@ -365,7 +370,7 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
 .modulo-flecha { display: inline-block; transition: transform var(--transicion); }
 .card-modulo:hover .modulo-flecha, .card-modulo:focus-visible .modulo-flecha { transform: translateX(5px); }
 
-/* v18: las 3 cards del menú de inicio en gris metálico (acero cepillado), para que se despeguen del fondo.
+/* v18: las cards del menú de inicio (4 desde v19) en gris metálico (acero cepillado), para que se despeguen del fondo.
    Líneas finas horizontales («cepillado») + degradado de grises + brillo en el borde superior. */
 .card-menu {
   --brillo: #9fe3ff;
@@ -380,20 +385,19 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
 }
 .card-menu .modulo-texto { color: #d0d7e1; }
 .card-menu .modulo-ir { color: #a8e6ff; }
-.card-menu .modulo-icono { color: #6fd3ff; border-color: rgba(159, 227, 255, 0.4); background-color: rgba(10, 18, 30, 0.35); }
 .card-menu:hover, .card-menu:focus-visible {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.34), inset 0 -1px 0 rgba(0, 0, 0, 0.35),
     0 0 0 1px var(--brillo), 0 0 26px var(--brillo-suave), 0 22px 46px rgba(0, 0, 0, 0.6);
 }
-.card-menu:hover .modulo-icono, .card-menu:focus-visible .modulo-icono { background-color: rgba(10, 18, 30, 0.5); }
 
 /* Sin movimiento: solo cambian colores, brillo y sombra. */
 @media (prefers-reduced-motion: reduce) {
   .card-modulo, .card-admin, .modulo-flecha, .modulo-icono, .btn { transition-property: border-color, box-shadow, color, background-color, filter; }
   .card-modulo:hover, .card-modulo:focus-visible,
   .card-admin:hover:not(:disabled), .card-admin:focus-visible:not(:disabled),
-  .card-modulo:hover .modulo-flecha, .card-modulo:focus-visible .modulo-flecha { transform: none; }
+  .card-modulo:hover .modulo-flecha, .card-modulo:focus-visible .modulo-flecha,
+  .card-modulo:hover .modulo-icono, .card-modulo:focus-visible .modulo-icono { transform: none; }
 }
 
 /* ---------- Historial: filtros, indicadores, gráfico y paginación ---------- */

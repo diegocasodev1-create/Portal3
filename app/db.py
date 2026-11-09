@@ -190,7 +190,7 @@ def marcar_invitacion_enviada(usuario_id: int) -> None:
 INTENTOS_PARA_BLOQUEO = 5
 MINUTOS_BLOQUEO = 15
 # La contraseña por defecto solo sirve estas horas desde el alta o el último restablecimiento.
-HORAS_CONTRASENA_POR_DEFECTO = 72
+HORAS_CONTRASENA_POR_DEFECTO = 24  # v20: antes 72 h
 
 # El reloj es el de SQL (SYSUTCDATETIME), igual que en los latidos: Bloqueado y PorDefectoVencida se calculan ahí.
 _COLUMNAS_ADMIN = f"""Id, Nombre, Correo, ContrasenaHash, ContrasenaSal, AlgoritmoHash,
@@ -322,10 +322,18 @@ _VIVA_MIRASTOCK = " AND COALESCE(FinalSesion, CreadoEn) >= DATEADD(MINUTE, -10, 
 _VIVA_ENERGIA = " AND COALESCE(FinalSesion, Fecha) >= DATEADD(MINUTE, -10, SYSUTCDATETIME())"
 
 # v15: el latido renueva la llave a ahora + 30 min, sin acortar nunca un ExpiraEn posterior.
+# v20: nunca más allá de CreadoEn + 4 h, y una llave ya vencida no se renueva (el latido igual mide la sesión).
+HORAS_MAXIMAS_LLAVE_MIRASTOCK = 4
 _SQL_LATIDO_MIRASTOCK = (
     "UPDATE core.SesionesAgente SET FinalSesion = SYSUTCDATETIME(),"
-    " ExpiraEn = CASE WHEN ExpiraEn > DATEADD(MINUTE, 30, SYSUTCDATETIME()) THEN ExpiraEn"
-    " ELSE DATEADD(MINUTE, 30, SYSUTCDATETIME()) END"
+    " ExpiraEn = CASE"
+    " WHEN ExpiraEn <= SYSUTCDATETIME() THEN ExpiraEn"
+    " WHEN DATEADD(MINUTE, 30, SYSUTCDATETIME()) <= ExpiraEn THEN ExpiraEn"
+    f" WHEN DATEADD(MINUTE, 30, SYSUTCDATETIME()) <= DATEADD(HOUR, {HORAS_MAXIMAS_LLAVE_MIRASTOCK}, CreadoEn)"
+    " THEN DATEADD(MINUTE, 30, SYSUTCDATETIME())"
+    f" WHEN DATEADD(HOUR, {HORAS_MAXIMAS_LLAVE_MIRASTOCK}, CreadoEn) > ExpiraEn"
+    f" THEN DATEADD(HOUR, {HORAS_MAXIMAS_LLAVE_MIRASTOCK}, CreadoEn)"
+    " ELSE ExpiraEn END"
     " WHERE Token = ? AND CreadoEn >= DATEADD(HOUR, -12, SYSUTCDATETIME())"
     " AND COALESCE(CierreExplicito, 0) = 0"
     " AND (FinalSesion IS NULL OR FinalSesion < DATEADD(SECOND, -60, SYSUTCDATETIME()))"

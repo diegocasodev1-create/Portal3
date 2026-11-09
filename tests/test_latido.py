@@ -70,13 +70,15 @@ def test_mirastock_sin_llave_400(cliente, bd):
     assert bd.llamadas_latido == []
 
 
-def test_mirastock_llave_vencida_con_sesion_viva_acepta_el_latido_y_la_renueva(cliente, bd):
-    # ExpiraEn no decide si la sesión sigue: manda la última actividad (v15: 10 min). El latido renueva la llave.
+def test_mirastock_llave_vencida_con_sesion_viva_acepta_el_latido_sin_renovarla(cliente, bd):
+    # ExpiraEn no decide si la sesión sigue: manda la última actividad (v15: 10 min).
+    # v20: el latido mide la sesión, pero una llave ya vencida no se renueva.
+    vencida = bd.ahora - timedelta(hours=2)
     bd.agregar_sesion_agente(LLAVE, bd.ahora - timedelta(hours=3), final_sesion=bd.ahora - timedelta(minutes=2),
-                             expira_en=bd.ahora - timedelta(hours=2))
+                             expira_en=vencida)
     assert latir(cliente, mirastock()).status_code == 204
     assert bd.sesiones_agente[LLAVE]["FinalSesion"] == bd.ahora
-    assert bd.sesiones_agente[LLAVE]["ExpiraEn"] == bd.ahora + timedelta(minutes=30)
+    assert bd.sesiones_agente[LLAVE]["ExpiraEn"] == vencida
 
 
 def test_mirastock_llave_de_mas_de_12_horas_no_se_actualiza(cliente, bd):
@@ -466,9 +468,14 @@ def test_db_latido_mirastock_sql(cursor_latido, rowcount, esperado):
     [(sql, params)] = cur.ejecutados
     assert params == (LLAVE,)
     assert sql.startswith("UPDATE core.SesionesAgente SET FinalSesion = SYSUTCDATETIME(),")
-    # v15: renueva la llave a ahora + 30 min sin acortarla.
-    assert ("ExpiraEn = CASE WHEN ExpiraEn > DATEADD(MINUTE, 30, SYSUTCDATETIME()) THEN ExpiraEn"
-            " ELSE DATEADD(MINUTE, 30, SYSUTCDATETIME()) END WHERE") in sql
+    # v15: renueva la llave a ahora + 30 min sin acortarla. v20: no si ya venció, y nunca después de CreadoEn + 4 h.
+    assert ("ExpiraEn = CASE"
+            " WHEN ExpiraEn <= SYSUTCDATETIME() THEN ExpiraEn"
+            " WHEN DATEADD(MINUTE, 30, SYSUTCDATETIME()) <= ExpiraEn THEN ExpiraEn"
+            " WHEN DATEADD(MINUTE, 30, SYSUTCDATETIME()) <= DATEADD(HOUR, 4, CreadoEn)"
+            " THEN DATEADD(MINUTE, 30, SYSUTCDATETIME())"
+            " WHEN DATEADD(HOUR, 4, CreadoEn) > ExpiraEn THEN DATEADD(HOUR, 4, CreadoEn)"
+            " ELSE ExpiraEn END WHERE") in sql
     assert "WHERE Token = ? AND CreadoEn >= DATEADD(HOUR, -12, SYSUTCDATETIME())" in sql
     assert "(FinalSesion IS NULL OR FinalSesion < DATEADD(SECOND, -60, SYSUTCDATETIME()))" in sql
     assert "AND COALESCE(CierreExplicito, 0) = 0" in sql
@@ -855,7 +862,7 @@ VENTANA = [(2, True), (9, True), (10, True), (11, False), (45, False)]
 @pytest.mark.parametrize("hace_min, viva", VENTANA)
 def test_v15_mirastock_latido_con_final_de_sesion(cliente, bd, hace_min, viva):
     anterior = bd.ahora - timedelta(minutes=hace_min)
-    expira = bd.ahora - timedelta(minutes=1)
+    expira = bd.ahora + timedelta(minutes=1)
     bd.agregar_sesion_agente(LLAVE, bd.ahora - timedelta(hours=1), final_sesion=anterior, expira_en=expira)
     assert latir(cliente, mirastock()).status_code == 204
     sesion = bd.sesiones_agente[LLAVE]

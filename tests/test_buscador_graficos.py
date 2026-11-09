@@ -332,4 +332,4 @@ def test_js_buscador_de_graficos(cliente_admin):
 @pytest.mark.parametrize("ruta", ["/estadisticas", "/estadisticas/general", "/estadisticas/portal/energia"])
 def test_paginas_con_cache_busting_actual(cliente_admin, ruta):
     texto = cliente_admin.get(ruta).text
-    assert "?v=19" in texto and "?v=16" not in texto
+    assert "?v=20" in texto and "?v=16" not in texto

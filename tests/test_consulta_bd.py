@@ -23,7 +23,8 @@ LISTA_CERRADA = {
     "SolicitudDetalle", "Solicitudes", "StockLurinERI", "UsuariosEntel",
 }
 OCULTAS = {
-    "AdministradoresPortal": {"ContrasenaHash", "ContrasenaSal"},
+    # v20: también AlgoritmoHash, IntentosFallidos y BloqueadoHasta (delataban a quién atacar).
+    "AdministradoresPortal": {"ContrasenaHash", "ContrasenaSal", "AlgoritmoHash", "IntentosFallidos", "BloqueadoHasta"},
     "HistorialAccesos": {"Token"},
     "SesionesAgente": {"Token"},
     "Descargas": {"Token"},
@@ -300,8 +301,7 @@ def test_admin_que_debe_cambiar_contrasena_403(cliente, bd, lectura):
 
 def test_filas_respuesta(cliente_admin, lectura):
     lectura["cursor"] = CursorBD(conteos=[3], filas=[
-        (7, "Ana", "ana@ejemplo.com", "PBKDF2_SHA256", 0, 1, 0, None, datetime(2026, 11, 5, 13, 0), None,
-         datetime(2026, 10, 30, 22, 0, 5)),
+        (7, "Ana", "ana@ejemplo.com", 0, 1, datetime(2026, 11, 5, 13, 0), None, datetime(2026, 10, 30, 22, 0, 5)),
     ])
     resp = filas(cliente_admin, tabla="AdministradoresPortal")
     assert resp.status_code == 200
@@ -312,9 +312,11 @@ def test_filas_respuesta(cliente_admin, lectura):
     assert datos["camposBusqueda"] == ["Correo"]
     assert datos["busqueda"] is None
     assert (datos["tope"], datos["mostrando"], datos["total"], datos["totalTabla"]) == (500, 1, 3, 3)
-    assert datos["filas"] == [[7, "Ana", "ana@ejemplo.com", "PBKDF2_SHA256", False, True, 0, None,
-                               "2026-11-05T13:00:00Z", None, "2026-10-30T22:00:05Z"]]
+    assert datos["filas"] == [[7, "Ana", "ana@ejemplo.com", False, True, "2026-11-05T13:00:00Z", None,
+                               "2026-10-30T22:00:05Z"]]
     assert "Contrasena" not in resp.text.replace("DebeCambiarContrasena", "").replace("FechaCambioContrasena", "")
+    for oculta in ("AlgoritmoHash", "IntentosFallidos", "BloqueadoHasta", "PBKDF2"):
+        assert oculta not in resp.text
 
 
 def test_filas_con_busqueda_recortada(cliente_admin, lectura):
@@ -405,10 +407,10 @@ def test_pagina_con_admin(cliente_admin):
     assert resp.status_code == 200
     texto = resp.text
     assert "<h1>Consulta de base de datos</h1>" in texto
-    assert '<script src="/static/comun.js?v=19" defer></script>' in texto
-    assert '<script src="/static/consulta-bd.js?v=19" defer></script>' in texto
+    assert '<script src="/static/comun.js?v=20" defer></script>' in texto
+    assert '<script src="/static/consulta-bd.js?v=20" defer></script>' in texto
     assert texto.index("comun.js") < texto.index("consulta-bd.js")
-    assert 'href="/static/styles.css?v=19"' in texto
+    assert 'href="/static/styles.css?v=20"' in texto
     assert 'href="/">← Inicio</a>' in texto
     assert 'maxlength="100"' in texto and 'placeholder="Contiene…"' in texto
     assert 'id="c-buscador" hidden' in texto
@@ -448,7 +450,7 @@ def test_css_tabla_con_encabezado_fijo_y_scroll(cliente):
 
 
 def test_js_servido_y_sin_innerhtml(cliente):
-    resp = cliente.get("/static/consulta-bd.js?v=19")
+    resp = cliente.get("/static/consulta-bd.js?v=20")
     assert resp.status_code == 200
     js = resp.text
     for prohibido in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):

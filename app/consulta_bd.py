@@ -6,7 +6,8 @@ autocommit (solo hay SELECT, nunca abre transacciones) y un tiempo máximo de 20
 El SQL se arma una sola vez, al importar el módulo, con los nombres de este catálogo. Lo único que llega del
 usuario es la clave de la tabla (se busca en el catálogo) y el texto a buscar, que siempre va como parámetro `?`.
 
-Columnas que nunca se muestran (ni se piden a la base): ContrasenaHash y ContrasenaSal de AdministradoresPortal,
+Columnas que nunca se muestran (ni se piden a la base): ContrasenaHash, ContrasenaSal, AlgoritmoHash,
+IntentosFallidos y BloqueadoHasta de AdministradoresPortal (v20: las tres últimas delataban a quién atacar),
 y Token de HistorialAccesos, SesionesAgente y Descargas.
 
 Todas las fechas se tratan como UTC (en Azure SQL getdate() y sysdatetime() también devuelven UTC).
@@ -58,8 +59,7 @@ def _cols(texto: str) -> tuple[tuple[str, str], ...]:
 _TABLAS = (
     Tabla(
         "AdministradoresPortal",
-        _cols("Id:entero Nombre:texto Correo:texto AlgoritmoHash:texto DebeCambiarContrasena:bit Activo:bit "
-              "IntentosFallidos:entero BloqueadoHasta:fechaHora UltimoAcceso:fechaHora "
+        _cols("Id:entero Nombre:texto Correo:texto DebeCambiarContrasena:bit Activo:bit UltimoAcceso:fechaHora "
               "FechaCambioContrasena:fechaHora FechaAlta:fechaHora"),
         "[Id] DESC", ("Correo",),
     ),

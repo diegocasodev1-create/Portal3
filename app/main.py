@@ -170,10 +170,38 @@ async def cors_latido(request: Request, call_next):
     return response
 
 
+# v20: tope de tamaño para los body de /api/* (el de /api/latido sigue en 8 KB, con su propia lectura por partes).
+TAMANO_MAX_BODY_API = 64 * 1024
+_METODOS_CON_BODY = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def limite_body(request: Request, call_next):
+    """413 si Content-Length pasa de 64 KB; 411 si un POST/PUT/PATCH/DELETE llega sin Content-Length.
+
+    uvicorn nunca entrega más bytes que los declarados en Content-Length, así que basta con revisarlo.
+    """
+    path = request.url.path
+    if path.startswith("/api/") and request.method in _METODOS_CON_BODY:
+        largo = request.headers.get("content-length")
+        if largo is None:
+            if path != RUTA_LATIDO and request.headers.get("transfer-encoding"):
+                return JSONResponse({"detail": "Falta el largo de la solicitud (Content-Length)."}, status_code=411)
+        else:
+            try:
+                excedido = int(largo) > TAMANO_MAX_BODY_API
+            except ValueError:
+                return JSONResponse({"detail": "Cuerpo de la solicitud inválido."}, status_code=400)
+            if excedido:
+                return JSONResponse({"detail": "El cuerpo de la solicitud es demasiado grande."}, status_code=413)
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def headers_seguridad(request: Request, call_next):
     response = await call_next(request)
     response.headers["Content-Security-Policy"] = CSP
+    response.headers["Strict-Transport-Security"] = "max-age=31536000"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     if not request.url.path.startswith("/static/"):
@@ -457,7 +485,7 @@ def _errores_contrasena_nueva(nueva: str, confirmacion: str) -> dict[str, str]:
 
 
 @app.post("/api/auth/cambiar-contrasena")
-def api_cambiar_contrasena(datos: CambioContrasena, admin: dict = Depends(auth.require_sesion)):
+def api_cambiar_contrasena(request: Request, datos: CambioContrasena, admin: dict = Depends(auth.require_sesion)):
     errores: dict[str, str] = {}
     if not datos.actual:
         errores["actual"] = "Ingresa tu contraseña actual."
@@ -478,8 +506,9 @@ def api_cambiar_contrasena(datos: CambioContrasena, admin: dict = Depends(auth.r
     db.cambiar_contrasena_admin(admin["Id"], hash_, sal, algoritmo)
     log.info("Contraseña cambiada (administrador Id=%s)", admin["Id"])
     resp = JSONResponse({"mensaje": "Contraseña actualizada.", "redirect": "/"})
-    # La cookie anterior queda inválida (otra huella): se emite una nueva para seguir conectado.
-    auth.crear_cookie_sesion(resp, {"id": admin["Id"], "h": auth.huella(hash_)})
+    # La cookie anterior queda inválida (otra huella): se emite una nueva para seguir conectado,
+    # con la misma hora de ingreso (el tope de 12 h no se reinicia).
+    auth.crear_cookie_sesion(resp, {"id": admin["Id"], "h": auth.huella(hash_), "i": request.state.sesion["i"]})
     return resp
 
 
@@ -706,12 +735,14 @@ def api_verificar_administrador(
     })
     # Si era su propia card y el hash se migró a PBKDF2, su cookie necesita la huella nueva.
     if admin_id == admin["Id"] and verificado["ContrasenaHash"] != admin["ContrasenaHash"]:
-        auth.crear_cookie_sesion(resp, auth.datos_sesion(verificado))
+        auth.crear_cookie_sesion(resp, auth.datos_sesion(verificado, request.state.sesion["i"]))
     return resp
 
 
 @app.put("/api/administradores/{admin_id}")
-def api_editar_administrador(admin_id: int, datos: AdministradorEditar, admin: dict = Depends(require_admin)):
+def api_editar_administrador(
+    admin_id: int, request: Request, datos: AdministradorEditar, admin: dict = Depends(require_admin)
+):
     destino = _admin_editable(admin_id)
     if not auth.permiso_valido(datos.permiso, destino, admin["Id"]):
         return JSONResponse({"detail": MSG_PERMISO_VENCIDO, "permisoVencido": True}, status_code=403)
@@ -756,7 +787,7 @@ def api_editar_administrador(admin_id: int, datos: AdministradorEditar, admin: d
     resp = JSONResponse({"administrador": _admin_json(actualizado, admin["Id"]), "mensaje": mensaje})
     if hash_nuevo is not None and admin_id == admin["Id"]:
         # Cambió su propia contraseña: sigue conectado en esta sesión.
-        auth.crear_cookie_sesion(resp, {"id": admin_id, "h": auth.huella(hash_nuevo)})
+        auth.crear_cookie_sesion(resp, {"id": admin_id, "h": auth.huella(hash_nuevo), "i": request.state.sesion["i"]})
     return resp
 
 
@@ -816,6 +847,9 @@ async def api_latido(request: Request):
 
     Nunca se registran en el log la llave ni el token.
     """
+    # v20: límite por IP antes de leer el body o tocar la BD.
+    if not auth.limite_latidos.permitir(auth.ip_cliente(request)):
+        raise StarletteHTTPException(status_code=429, detail="Demasiados latidos desde tu conexión.")
     datos = await _cuerpo_latido(request)
     tipo = datos.get("tipo")
     # `cierre` es opcional: true = el usuario cerró con «Atrás» o «Cerrar sesión». type() evita aceptar 1 o 0.
@@ -1407,8 +1441,8 @@ def api_consulta_bd_filas(
     datos = consulta_bd.consultar(elegida, texto)
     # Nunca se registra el texto buscado.
     log.info(
-        "Consulta de base de datos: %s (%s filas%s)",
-        elegida.nombre_completo, len(datos["filas"]), ", con búsqueda" if texto else "",
+        "Consulta de base de datos: %s (%s filas%s, por administrador Id=%s)",
+        elegida.nombre_completo, len(datos["filas"]), ", con búsqueda" if texto else "", admin["Id"],
     )
     return {
         "tabla": elegida.nombre_completo,
