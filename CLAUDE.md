@@ -8,7 +8,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brief.md` is the original spec (in Spanish). Some later decisions override it, and they are noted below. `README.md` covers local setup, the API table, the email flow, deployment, logs, mail activation and costs.
 
-## Current status (as of 2026-11-09; v19 deployed that day)
+## Current status (as of 2026-11-09; v19 and v20 deployed that day)
+
+### v20 (2026-11-09): security fixes + 3D icons on the home cards — DEPLOYED
+- **Security review (2026-11-09, analysis only):** findings R1–R17 (repo), A1–A5 (Azure) and E1–E4 (outside the repo: Power Automate URLs with `sig=` in the MiraStock JS, `ConsultarAccesoPortal` trusting the email from the browser, client-side locks, MiraStock key in the URL). Approved reads: `pip-audit` (no known vulns), Container App config (secrets by name only), SQL firewall/audit/Defender, DB principals catalog.
+- **Fixed in v20 (user's choice):**
+  - R1: `Admin@123456` stays the default (user's decision) but is no longer in `comun.js` (only the server checks «≠ por defecto»; the UI rule «distinta…» no longer knows it); `db.HORAS_CONTRASENA_POR_DEFECTO` 72 → **24**.
+  - R3: `claves.verificar` always costs one PBKDF2 (`gastar_tiempo` for SHA2_512, unknown algorithm, empty/long password or missing salt), so login timing does not reveal admins with the default password pending.
+  - R4: absolute session cap `auth.DURACION_MAXIMA_SESION_S` = 12 h. The cookie is `{id, h, i}` (`i` = login epoch); `leer_sesion` rejects missing/non-int `i`, `i` > now + 60 s or ≥ 12 h old; `crear_cookie_sesion` caps `Max-Age` at the time left. Renewals, password change, own-card verification and own password edit keep `i`. Pre-v20 cookies became invalid at deploy (everyone logged in again).
+  - R5: `auth.limite_latidos` = 60 / 60 s per IP (last `X-Forwarded-For`), checked before reading the body → 429 «Demasiados latidos desde tu conexión.».
+  - R6: `db._SQL_LATIDO_MIRASTOCK` renews `ExpiraEn` to now + 30 min only if it has not expired yet and never past `CreadoEn + HORAS_MAXIMAS_LLAVE_MIRASTOCK` (4 h); the heartbeat still sets `FinalSesion`.
+  - R7: `/consulta-bd` no longer selects `AlgoritmoHash`, `IntentosFallidos`, `BloqueadoHasta`; the log line adds «por administrador Id=N» (never `q`).
+  - R10: `Strict-Transport-Security: max-age=31536000` on every response.
+  - R11: middleware `limite_body`: `/api/*` POST/PUT/PATCH/DELETE with `Content-Length` > 64 KB → 413; without `Content-Length` but with `Transfer-Encoding` → 411 (except `/api/latido`, which keeps its own streamed 8 KB cap); invalid `Content-Length` → 400.
+  - R16: `.gitignore` adds `.env.*`, `!.env.example`, `body.json`.
+- **Not fixed (open, user's decision pending):** R2 (app uses `sqladmin`/dbo), R8, R9, R12–R15, R17; A1 (SQL public access + `AllowAllWindowsAzureIps` + `sqladmin` password exposed in chat, not rotated; 10 per-IP rules incl. old QueryEditor ones), A2 (SQL auditing and Defender disabled), A3 (external ingress without IP restrictions or MFA), A4 (ACR admin credentials), A5 (`public` can SELECT `core.fn_DiagnosticoStock`); E1–E4 (Power Pages / Power Automate, the user's side).
+- **Icons:** the 4 home cards use 3D PNGs from the user (`app/static/img/icono-{estadisticas,contactos,administradores,consulta-bd}.png` 96 px + `@2x` 176 px, RGBA transparent, ≤ 20 KB each) instead of SVGs: `<img class="modulo-icono" … width="88" height="88" alt="" decoding="async">`. `.modulo-icono` = 88 px (72 px ≤ 600 px), no box/border/background, negative margin for the transparent padding; hover/focus: `translateY(-3px) scale(1.06)` + cyan `drop-shadow` (no movement with reduced motion). The user's 512 px originals were reduced to 176 px with Pillow (scratchpad, not in requirements); the 1x were generated from them.
+- **1162 tests pass** (new `tests/test_v20_seguridad.py`, `tests/test_iconos.py`). JS checked with esprima. Static `?v=20`.
+- The user reviewed the icons locally and approved v20 on 2026-11-09.
+- Commit `edd836f`. Deployed on 2026-11-09 (~17:10 UTC) as image `mira-admin-app:v20`, revision `--0000021`.
+  - Checks: `/health` 200; `/login` 200 with `strict-transport-security: max-age=31536000` and `?v=20`; `/static/img/icono-estadisticas@2x.png` 200 (`image/png`, 14,969 bytes); `POST /api/latido` with an empty body 400; `comun.js?v=20` has no `Admin@123456`; `/api/consulta-bd/tablas` without a session 401; startup clean. `--0000021` has 100% of the traffic and is the only active revision (the first checks right after the update still hit v19 while the traffic switched).
+  - Not done by Claude in Azure: a real login (needs the user's password).
+
 
 ### v19 (2026-11-09): «Consulta de base de datos» (read-only) — DEPLOYED
 - Asked for by the user. **1054 tests pass** (new `tests/test_consulta_bd.py`). JS checked with esprima. Static `?v=19`.
@@ -252,19 +273,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Commits from `41f3292` (v13) to the closing commit of this session, all pushed to `origin/main`. **866 tests pass.** Static files at `?v=16`; the next image is **v17**.
 
 ### PENDIENTES (next session)
-1. **Verify v16–v19 in Azure with the user's login** (Claude has not logged in to Azure):
+1. **Verify v16–v20 in Azure with the user's login** (Claude has not logged in to Azure):
+   - v20: login again (old cookies are invalid), the 4 home icons (desktop and phone, hover), the session ends 12 h after login even with activity, a password change still works.
    - v19: the fourth card (2 × 2 grid, 1 column on a phone), `/consulta-bd` with a few tables (StockLurinERI search by SKU, a table without search, long texts, dates in local time, sticky header and horizontal scroll).
    - v18: logo in the header of every page, white sticky header over the charts and under the modals, blue header buttons, steel login (including an error message), metallic menu cards, phone width.
    - v17: the email search in a portal view (cards, charts and Top 10 filtered; chip «Filtrado por»; no match; remembered per portal), the dark background, cards and buttons.
    - v16: `/estadisticas` (cards), `/estadisticas/general` and a portal view with real data (charts, tables, tabs, date filter per view).
    - In every page: the browser console free of CSP errors.
 2. **Verify with a real session** (MiraStock and Energía) that the JS close after 30 min of inactivity leaves the session at its last activity with Cierre «Inactividad», and that a heartbeat outside the 10-min window is ignored (v15). Checking it in `/historial` or by SQL is a prod read: ask the user first.
+4. **Security review leftovers** (see v20 «Not fixed»): ask the user which to tackle next; A1 first (rotate `sqladmin`, prune firewall rules).
 3. **Levels 3/4:** catalog of funcionalidades (level 3) and subfuncionalidades (level 4) per portal, when management defines it (and where the data will come from; nothing exists yet in the DB). It will be a new entry in `SUBVISTAS` in `estadisticas.js` plus its own endpoint.
 
 ### Next session: start here
 - Start with **PENDIENTES** above. The older items below are still open unless noted.
 - **v12 deployed on 2026-10-30.** Ask the user whether login, password change and `/administradores` work in Azure (Claude did not log in there). Each admin with the default password must change it within 72 h.
 - **Session closed on 2026-10-30** after the v12 deploy; commits `13e114b` (v12 code), `77f756e` (docs) and its closing commit were pushed to `origin/main`.
+- **v20 deployed on 2026-11-09** (`--0000021`): see v20 and PENDIENTES 1 and 4.
 - **v19 deployed on 2026-11-09** (`--0000020`): see v19 and PENDIENTES 1.
 - **Session closed on 2026-11-05** after the v18 deploy (`--0000019`): see "Session of 2026-11-05" and PENDIENTES 1.
 - **v16 deployed on 2026-11-03** (`--0000017`): see PENDIENTES 1.
@@ -284,7 +308,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Deployment
 - URL: https://ca-mira-admin.agreeablemushroom-64620b1a.eastus.azurecontainerapps.io
 - Revision mode `Single`: traffic follows the latest revision, and no older one is kept for rollback.
-- **Running: image v19, revision `ca-mira-admin--0000020`, with own login (always on), `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~15:44 UTC on 2026-11-09. `/health` is OK and startup was clean. It has 100% of the traffic; `--0000019` (v18) was deprovisioning right after the deploy. `ENERGIA_PORTAL_URL`, `LATIDO_ORIGINS`, `PORTAL_BASE_URL` and `TOKEN_AUDIENCE` are not set in Azure, so the code defaults apply. The next image is **v20** (static files are at `?v=19`; bump to `?v=20` if they change).
+- **Running: image v20, revision `ca-mira-admin--0000021`, with own login (always on), `MAIL_ENABLED=true`, `EXTID_ENABLED=true`.** It was deployed at ~17:10 UTC on 2026-11-09. `/health` is OK and startup was clean. It has 100% of the traffic and is the only active revision. `ENERGIA_PORTAL_URL`, `LATIDO_ORIGINS`, `PORTAL_BASE_URL` and `TOKEN_AUDIENCE` are not set in Azure, so the code defaults apply. The next image is **v21** (static files are at `?v=20`; bump to `?v=21` if they change).
 - Image history:
   - v3: auth off.
   - v4: External ID + PDF attachment.
@@ -303,6 +327,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - v17: email search for the charts of each portal (`/api/estadisticas/resumen`, `correo` in `/series` and `/distribucion`) + visual refresh (background, cards, buttons), `?v=17` (`--0000018`).
   - v18: MiraGroup logo (`app/static/img/`), white sticky header with blue buttons, steel login, metallic menu cards, `?v=18` (`--0000019`).
   - v19: «Consulta de base de datos» (`/consulta-bd`, `/api/consulta-bd/*`, 20 tables, read-only, app connection), fourth menu card + 2 × 2 grid, `?v=19` (`--0000020`).
+  - v20: security fixes R1/R3/R4/R5/R6/R7/R10/R11/R16 + 3D PNG icons on the home cards, `?v=20` (`--0000021`).
 - **az CLI** is logged in to both tenants (`e3112796-…` workforce/subscription, `cb938793-…` External ID), and the active one can switch. Before az commands on Azure resources, run `az account set --subscription 38b3f030-c7b5-4d38-822b-c533f88cd34a`.
 - Logs older than the current replica (it scales to 0): Log Analytics workspace `d8a192a1-91f6-4add-882c-d1396d044ba0`, table `ContainerAppConsoleLogs_CL`, via `az monitor log-analytics query`. The app logs the user Id and the External ID account id, never the email.
 
@@ -339,7 +364,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Verified:
   - The portal public key loads (local and Azure).
   - `/health`, the no-session page, and the 401/404 checks pass.
-  - **1054 tests pass** (v19, locally; `tests/test_sin_auth.py` no longer exists).
+  - **1162 tests pass** (v20, locally; `tests/test_sin_auth.py` no longer exists).
   - v11 statistics match independent SQL on the production view (2026-10-30).
   - Code-only sign-in with a federated/mail account works.
   - Welcome emails arrive at other domains (per the user).
@@ -369,24 +394,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - Claude's shell is non-interactive: `Read-Host` cannot prompt. To enter a secret, write a script to the scratchpad that reads it with `Read-Host -AsSecureString`, discards the az output and prints only success or failure. The user runs it in their own PowerShell window.
 - Never print secrets from `.env`, ACR credentials or Container App secrets. Show only secret *names*. Scripts that need secrets read them from `.env` inside the script and keep them out of the output.
 - Do not create or modify Power Pages files. The user handles the portal.
-- The frontend uses no frameworks or external JS/CSS libraries. The only external resource is the Google Fonts Exo 2 font. The logo is `app/static/img/logo-miragroup.png` (+ `@2x`); `app/media/` holds the originals and is never served or committed.
+- The frontend uses no frameworks or external JS/CSS libraries. The only external resource is the Google Fonts Exo 2 font. The logo is `app/static/img/logo-miragroup.png` (+ `@2x`); `app/media/` holds the originals and is never served or committed. The home card icons are `app/static/img/icono-*.png` (+ `@2x`, v20).
 
 ## Architecture (cross-cutting points)
 
 - **Identity flow (v12, own login; `/auth/portal` and `AUTH_ENABLED` no longer exist):**
   1. `/login` (public, `login.js`, no `comun.js`) posts `{correo, contrasena}` to `POST /api/auth/login` (CSRF headers required). Pydantic `Ingreso` lowercases/trims the email and never trims passwords.
   2. `auth.autenticar`: unknown email, `Activo = 0` or `Bloqueado` → `claves.gastar_tiempo` (a throwaway PBKDF2, so timing does not reveal emails) + `CredencialesInvalidas`; else `auth.comprobar_contrasena`.
-  3. `comprobar_contrasena` (shared with the cards and the change endpoint): wrong → `db.registrar_fallo_admin` (5 → `BloqueadoHasta` = +15 min; a failure after an expired lock restarts at 1; no counting while locked) and `CredencialesInvalidas`; right but `DebeCambiarContrasena` and `PorDefectoVencida` (72 h) → `ContrasenaPorDefectoVencida`; right → `registrar_exito_admin` (0 attempts, unlock, `UltimoAcceso` only on login) and, if SHA2_512 and not `DebeCambiar`, `migrar_hash_admin` (UPDATE guarded by `ContrasenaHash = old`).
+  3. `comprobar_contrasena` (shared with the cards and the change endpoint): wrong → `db.registrar_fallo_admin` (5 → `BloqueadoHasta` = +15 min; a failure after an expired lock restarts at 1; no counting while locked) and `CredencialesInvalidas`; right but `DebeCambiarContrasena` and `PorDefectoVencida` (24 h since v20; 72 h before) → `ContrasenaPorDefectoVencida`; right → `registrar_exito_admin` (0 attempts, unlock, `UltimoAcceso` only on login) and, if SHA2_512 and not `DebeCambiar`, `migrar_hash_admin` (UPDATE guarded by `ContrasenaHash = old`).
   4. All login failures → 401 «Correo o contraseña incorrectos.» (the expired default password has its own message). 429 when `auth.limite_intentos` (20 / 15 min per IP, last `X-Forwarded-For` entry, since uvicorn trusts all proxies) is exceeded.
-  5. Success → JSON `{redirect, debeCambiarContrasena}` (`?siguiente=` only internal paths via `main._siguiente_seguro`) + cookie `mira_admin_sesion` = itsdangerous `{id, h}`, `h` = `auth.huella(hash)` (HMAC-SHA256 with `SESSION_SECRET`, 32 hex). HttpOnly, Secure, SameSite=Lax.
+  5. Success → JSON `{redirect, debeCambiarContrasena}` (`?siguiente=` only internal paths via `main._siguiente_seguro`) + cookie `mira_admin_sesion` = itsdangerous `{id, h, i}`, `h` = `auth.huella(hash)` (HMAC-SHA256 with `SESSION_SECRET`, 32 hex), `i` = login epoch (v20: absolute 12 h cap, kept on every re-issue). HttpOnly, Secure, SameSite=Lax, `Max-Age` = min(60 min, time left to 12 h).
   6. Middleware `sesion` only checks the signature (`request.state.sesion`) and renews the cookie on every valid response, unless the response already sets it (login, logout, password change) or is 401/403 or `/static/`.
   7. Pages (`main._pagina_protegida`): no cookie → 303 `/login?siguiente=<path>`; `auth.admin_de_sesion` reads the admin by Id and requires `Activo` and a matching huella, else 303 `/login` + cookie deleted; `DebeCambiarContrasena` → 303 `/cambiar-contrasena`; DB error → `error.html` 503.
-- **Hashes (`app/claves.py`):** `SHA2_512` = `sha512(sal + clave.encode("utf-16-le"))` (what the SQL SPs produce); `PBKDF2_SHA256` = `pbkdf2_hmac("sha256", utf-8, sal32, ITERACIONES_PBKDF2 = 600_000)`, 32 bytes. `verificar` uses `hmac.compare_digest`, rejects > 128 chars and unknown algorithms. Policy `error_politica`: ≥ 10, ≤ 128, upper, lower, digit, symbol (not letter/digit/space), ≠ `Admin@123456`; "≠ current" is checked by each endpoint AFTER verifying the current password (otherwise it is a guessing oracle). `comun.js` mirrors the policy (`errorContrasena`, `marcarReglas`).
+- **Hashes (`app/claves.py`):** `SHA2_512` = `sha512(sal + clave.encode("utf-16-le"))` (what the SQL SPs produce); `PBKDF2_SHA256` = `pbkdf2_hmac("sha256", utf-8, sal32, ITERACIONES_PBKDF2 = 600_000)`, 32 bytes. `verificar` uses `hmac.compare_digest`, rejects > 128 chars and unknown algorithms, and (v20) always costs one PBKDF2 (`gastar_tiempo` for anything that is not a real PBKDF2 check). Policy `error_politica`: ≥ 10, ≤ 128, upper, lower, digit, symbol (not letter/digit/space), ≠ `Admin@123456`; "≠ current" is checked by each endpoint AFTER verifying the current password (otherwise it is a guessing oracle). `comun.js` mirrors the policy (`errorContrasena`, `marcarReglas`) except «≠ `Admin@123456`», which since v20 only the server checks (the default password must not be in public JS).
 - **Authorization:** `auth.require_sesion` (admin with valid session, even if it must change the password; used by `/api/me` and `/api/auth/cambiar-contrasena`) and `auth.require_admin` (also raises `CambioContrasenaRequerido` → 403 `{detail, cambioRequerido: true}`; `comun.js`/`app.js` redirect to `/cambiar-contrasena`). Both re-read the admin in SQL on every request (cached in `request.state.admin`), so deactivating, deleting or changing/resetting the password cuts the session at once (401). Handlers take `admin: dict`.
 - **Admin center (`/administradores`, v12):** `GET /api/administradores` (never hash/salt; `estado` activo/bloqueado/inactivo, `esYo`). `POST /{id}/verificar` with that admin's password → `auth.crear_permiso` (itsdangerous with its own salt, 300 s, `{d: target Id, p: session admin Id, h: target huella}`); wrong → 422 on `contrasena` and counts for THAT admin's lock; locked 423; inactive 403. `PUT /{id}` requires `auth.permiso_valido` (else 403 `{detail, permisoVencido: true}`), validates nombre (≤ 150)/correo (409 if taken), optional `nuevaContrasena` + `confirmacion` (policy, ≠ current checked against the hash since the permit proves knowledge). A new password closes that admin's other sessions; editing yourself re-issues your cookie. `administradores.js` keeps the permit in memory only and drops it when the ficha closes (`Mira.abrirModal(modal, foco, alCerrar)`).
-- **Tests (v12):** `conftest.BDFalsa.admins` + `agregar_admin(...)` reproduce the SQL rules with `bd.ahora`; admin Id 1 = `ADMIN` / `CLAVE_ADMIN` (PBKDF2). Autouse `iteraciones_rapidas` lowers PBKDF2 to 1,000 (a test checks the source says 600_000) and `sin_limite_previo` clears the IP limiter. `cliente_admin` uses `poner_sesion` (signed cookie, no login); `ingresar(cliente, ...)` calls the login.
+- **Tests (v12):** `conftest.BDFalsa.admins` + `agregar_admin(...)` reproduce the SQL rules with `bd.ahora`; admin Id 1 = `ADMIN` / `CLAVE_ADMIN` (PBKDF2). Autouse `iteraciones_rapidas` lowers PBKDF2 to 1,000 (a test checks the source says 600_000) and `sin_limite_previo` clears both IP limiters (`limite_intentos`, `limite_latidos`). `cliente_admin` uses `poner_sesion` (signed cookie, no login); `ingresar(cliente, ...)` calls the login.
 - **CSRF:** POST/PUT/PATCH/DELETE on `/api/*` require `Content-Type: application/json` and `X-Requested-With: mira-admin`. Otherwise the app returns 403. **Only exception: `/api/latido`** (public, no cookies, auth in the body).
-- **Security headers:** Strict CSP (`script-src 'self'`; no inline scripts or `style=""` attributes in HTML), `nosniff` and `Referrer-Policy: no-referrer`. Never log tokens, cookies or bodies; claim *names* only at DEBUG. `main.py` forces the msal/httpx/httpcore loggers to WARNING.
+- **Security headers:** Strict CSP (`script-src 'self'`; no inline scripts or `style=""` attributes in HTML), `nosniff`, `Referrer-Policy: no-referrer` and (v20) `Strict-Transport-Security: max-age=31536000`. Body limit (v20, middleware `limite_body`): `/api/*` writes > 64 KB → 413, chunked without `Content-Length` → 411 (not `/api/latido`). Never log tokens, cookies or bodies; claim *names* only at DEBUG. `main.py` forces the msal/httpx/httpcore loggers to WARNING.
 - **DB (`db.py`):** pyodbc with ODBC Driver 18 and parameterized queries only. NULL bits count as 0. Correo is lowercased and trimmed.
   - The real schema is in the `db.py` docstring. `Apellido` is `NOT NULL`, so an empty apellido is stored as `''`.
   - Duplicate emails: the app pre-checks, and also catches unique-index errors 2627/2601 on `UQ_UsuariosEntel_Correo`. Either way it returns 409.
@@ -419,15 +444,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - Tests: the `cuentas` fixture (`CuentasFalsas` in `conftest.py`) fakes the API-level calls. `tests/test_externalid.py` fakes `httpx.request` + msal for the module and the sync script.
   - **Sync tool:** `python -m app.tools.sync_externalid [--apply]` reads `db.listar_usuarios_con_acceso()`. It exits 2 and touches nothing if External ID is disabled or missing credentials. This reads the **production** table, so the user approves each run.
 - **Session heartbeats (`POST /api/latido`, v8):**
-  - Public: no `require_admin`, no CSRF header, no cookies. Body JSON ≤ 8 KB (Content-Length and streamed size are both checked), `Content-Type` `application/json` or `text/plain` (for `sendBeacon`). The handler is `async` and runs token validation and DB calls with `run_in_threadpool`.
-  - `{"tipo":"mirastock","t":<GUID>}` → `db.latido_mirastock` (UPDATE `core.SesionesAgente` by Token, CreadoEn within 12 h, 60 s rule, alive = `COALESCE(FinalSesion, CreadoEn)` ≤ 10 min ago (v15); accepted even after ExpiraEn, and renews it to now + 30 min without shortening it (v15)). The GUID is normalized with `uuid.UUID`.
+  - Public: no `require_admin`, no CSRF header, no cookies. v20: 60 requests per minute per IP (`auth.limite_latidos`) → 429. Body JSON ≤ 8 KB (Content-Length and streamed size are both checked), `Content-Type` `application/json` or `text/plain` (for `sendBeacon`). The handler is `async` and runs token validation and DB calls with `run_in_threadpool`.
+  - `{"tipo":"mirastock","t":<GUID>}` → `db.latido_mirastock` (UPDATE `core.SesionesAgente` by Token, CreadoEn within 12 h, 60 s rule, alive = `COALESCE(FinalSesion, CreadoEn)` ≤ 10 min ago (v15); accepted even after ExpiraEn, and renews it to now + 30 min without shortening it (v15); since v20 only while ExpiraEn is still in the future and never past CreadoEn + 4 h). The GUID is normalized with `uuid.UUID`.
   - `{"tipo":"energia","token":...}` → `auth.validar_token_energia` (via `auth._validar_token`, separate key cache `auth.clave_energia` from `ENERGIA_PORTAL_URL`, issuer = Energía host, no audience check) → `db.latido_energia(correo)`: one batch with `UPDLOCK, HOLDLOCK` that updates the latest OK Energía row whose `COALESCE(FinalSesion, Fecha)` is within 30 min (60 s rule via `CASE`, so a fast repeat never INSERTs), else INSERTs `Fecha = FinalSesion = SYSUTCDATETIME()`. It relies on the connection's transaction (`autocommit=False`), with no BEGIN TRAN.
   - v10: `{"tipo":"energia","t":<GUID>}` → `db.latido_energia_llave` / `db.cierre_energia_llave`: a plain UPDATE of `core.HistorialAccesos` by `Token`, `Portal = N'Energía'`, `Resultado = N'OK'`, `Fecha` within 12 h, not closed, alive (`COALESCE(FinalSesion, Fecha)` ≤ 10 min ago, v15; also for the close); the heartbeat has the 60 s rule, the close does not and sets `CierreExplicito = 1`. Never INSERTs (the flow creates the row). `t` and `token` together, or neither (key presence, even `null`) → 400 «Envía la llave (t) o el token, no ambos.». The GUID goes through `main._llave_latido`, shared with MiraStock.
   - Responses: 204 whenever valid (never reveals whether a key exists), 400 bad body, 401 bad token, 503 DB error or `auth.ClaveNoDisponible` (Energía key download failed; it subclasses `TokenInvalido`).
   - CORS: custom `cors_latido` middleware for this route only. Origins from `LATIDO_ORIGINS` (normalized: lowercase, no trailing slash), POST only, header Content-Type, no credentials, Max-Age 600. A preflight or POST with a disallowed Origin → 403. No Origin → processed.
   - Never log `t` or the token (rejections are logged at DEBUG with the reason only). `main._SinLatidos` filters `/api/latido` out of `uvicorn.access`.
   - Tests: `BDFalsa.latido_*` reproduce the SQL rules with `bd.ahora`; `crear_token_energia` + autouse fixture `clave_de_energia` (`estado["error"]` simulates the key being unavailable).
-- **Static cache busting:** pages reference `/static/*.css|js?v=19` (and the logo images). Bump it on every release that changes static files.
+- **Static cache busting:** pages reference `/static/*.css|js?v=20` (and the logo and icon images). Bump it on every release that changes static files.
 - **Explicit close (v9):** optional `"cierre"` in `/api/latido`, which must be a real bool (`type(x) is bool`; anything else → 400, `false` = normal heartbeat).
   - MiraStock: `db.cierre_mirastock` sets FinalSesion, `CierreExplicito = 1`, and `ExpiraEn = now` if it was in the future (the key is revoked). No 60 s rule, and never on an already closed session or one that is no longer alive (v15). Normal heartbeats add `COALESCE(CierreExplicito, 0) = 0`.
   - Energía: `_SQL_ENERGIA_INICIO` picks the latest row in the window (no closed filter) with `UPDLOCK, HOLDLOCK`. `UPDATE ... OUTPUT deleted.* INTO @previa` captures its prior state.
@@ -450,7 +475,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - Tests: `BDFalsa.historial` + `agregar_acceso()` in `conftest.py`, and `llamadas_historial` records the filters received. `test_historial.py` also checks the SQL text and params of `db.py` with a fake cursor.
 - **DB query (`/consulta-bd`, v19, read-only):**
   - `app/consulta_bd.py`: `TABLAS` (closed list of 20 `core` tables; key = table name without schema) with explicit columns + type (`texto`, `textoLargo` = capacity > 300 chars, `entero`, `decimal`, `bit`, `fechaHora`, `fecha`, `guid`), a fixed `orden` fragment and the `busqueda` columns. Columns are hardcoded (taken from the 2026-11-09 catalog read), never discovered at runtime: a new DB column does not show until it is added here; a renamed/dropped one makes that table answer 503.
-  - Never selected: `AdministradoresPortal.ContrasenaHash/ContrasenaSal`, `Token` of `HistorialAccesos`, `SesionesAgente` and `Descargas` (tests check the catalog and every SQL string).
+  - Never selected: `AdministradoresPortal.ContrasenaHash/ContrasenaSal/AlgoritmoHash/IntentosFallidos/BloqueadoHasta` (the last three since v20), `Token` of `HistorialAccesos`, `SesionesAgente` and `Descargas` (tests check the catalog and every SQL string).
   - `SQL` is built at import from the catalog only: `SELECT COUNT_BIG(*)` (+ the same with WHERE), `SELECT TOP (500) … ORDER BY <orden>`; `textoLargo` → `CASE WHEN LEN(c) > 300 THEN LEFT(c, 300) + N'…' ELSE c END`; search = `([c1] LIKE ? ESCAPE '\' OR …)` with `db._escapar_like` and the same `%texto%` param per column (no lowercasing: CI collation).
   - Connection `_conexion_consulta`: `db._cadena_conexion()` (app credentials), `autocommit=True`, `readonly=True`, `conn.timeout = 20`. RCSI is on, so it does not block writers.
   - `valor_json`: datetimes → ISO `…Z` (seconds), `date` → `AAAA-MM-DD`, decimals → string without trailing zeros, bits → bool.
@@ -507,7 +532,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - It swaps `app.db` and `mailer.enviar_bienvenida` for in-memory fakes and signs tokens with throwaway RSA keys.
   - The TestClient uses `https://testserver`. Cookies set manually need `domain="testserver.local"`.
 - JS syntax check: there is no Node on this machine. Use esprima from a scratch target dir: `pip install --target <dir> esprima==4.0.1`, then `esprima.parseScript(...)`.
-- Deploy a new version (always a new tag; v20 is next; bump `?v=` in the HTML, now `?v=19`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
+- Deploy a new version (always a new tag; v21 is next; bump `?v=` in the HTML, now `?v=20`, if static files changed): run the tests first, then `az acr build --registry acrscripth25prod --image mira-admin-app:vN .`, then `az containerapp update -n ca-mira-admin -g RG-COPILOT-DEV --image "acrscripth25prod.azurecr.io/mira-admin-app:vN"`. Verify `/health` and `az containerapp logs show -n ca-mira-admin -g RG-COPILOT-DEV --type console --tail 30 --format text`.
 - Azure layout:
   - `ca-mira-admin` is in `RG-COPILOT-DEV`, East US, with 0.25 vCPU, 0.5 Gi and 0–1 replicas.
   - It reuses environment `managedEnvironment-rgscripth25prod-818f` and ACR `acrscripth25prod`, both in `rg-script-h25-prod`.
