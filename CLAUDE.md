@@ -258,6 +258,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - **MiraStock** is logged automatically through `core.SesionesAgente`. Nothing writes to `HistorialAccesos` for it.
   - `Fecha` and `Correo` are nullable in the view. The API returns `null` for them and the CSV leaves the cell empty.
 
+### Session of 2026-11-09 (closed): v19 → v20 in production
+- **v19** (`--0000020`, commit `e30e0a6`): «Consulta de base de datos» (`/consulta-bd`, read-only, closed list of 20 `core` tables, hidden columns, `TOP (500)`, 300-char cut, `LIKE` with escape, 20 s timeout), fourth metallic card + 2 × 2 home grid. A separate DB user (`mira_consulta_lectura`) was planned and dropped by the user: it uses the app connection.
+- **Security review** (analysis only, read-only checks approved by the user): findings R1–R17, A1–A5, E1–E4 (see v20).
+- **v20** (`--0000021`, commit `edd836f`): fixes R1 (default password out of public JS, valid 24 h), R3 (constant-cost verification), R4 (12 h absolute session cap), R5 (60 heartbeats/min per IP), R6 (MiraStock key renewal capped at `CreadoEn + 4 h`, never after expiry), R7 (3 more hidden admin columns + admin Id in the log), R10 (HSTS), R11 (64 KB body cap / 411), R16 (`.gitignore`); 3D PNG icons on the 4 home cards (96 px + `@2x` 176 px).
+- Docs commits `486741a` (v19 state), `2ee0c87` (v20 state) and this closing commit (CLAUDE.md + README for v20), all pushed to `origin/main`. **1162 tests pass.** Static files at `?v=20`; the next image is **v21**.
+- v17 and v18 went to production in the previous session (2026-11-05; see below). Across both sessions: v17 email search for the charts + visual refresh, v18 logo + white sticky header + steel login + metallic menu cards, v19 DB query, v20 security fixes + 3D icons.
+- Claude did not log in to Azure (needs the user's password): every visual or logged-in check there is PENDIENTES 1. No local server was left running.
+- Scratchpad leftovers (not in the repo): Pillow and esprima in scratch dirs, the 512 px originals of the icons (`iconos_512_originales`), the dropped `mira_consulta_lectura` scripts (obsolete; do not use).
+
 ### Session of 2026-11-05 (closed): v17 → v18 in production
 - **v17** (`--0000018`, commit `c1d1f5d`): email search («contiene») for the cards and charts of each portal view (`GET /api/estadisticas/resumen`, `correo` in `/series` with portal and in `/distribucion`; `/series` with `correo` and no portal → 422), plus a visual refresh (dark gradient background with cyan/gold glows, cards with gradient/shadow/glow, buttons with glow).
 - **v18** (`--0000019`, commit `67307d8`): MiraGroup logo from `app/media/logo2.jpg` (`app/static/img/logo-miragroup.png` + `@2x`; `logoMG.png` deleted), white sticky header with blue buttons, login as a polished steel bar, metallic menu cards on `/`.
@@ -281,14 +290,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - v16: `/estadisticas` (cards), `/estadisticas/general` and a portal view with real data (charts, tables, tabs, date filter per view).
    - In every page: the browser console free of CSP errors.
 2. **Verify with a real session** (MiraStock and Energía) that the JS close after 30 min of inactivity leaves the session at its last activity with Cierre «Inactividad», and that a heartbeat outside the 10-min window is ignored (v15). Checking it in `/historial` or by SQL is a prod read: ask the user first.
-4. **Security review leftovers** (see v20 «Not fixed»): ask the user which to tackle next; A1 first (rotate `sqladmin`, prune firewall rules).
-3. **Levels 3/4:** catalog of funcionalidades (level 3) and subfuncionalidades (level 4) per portal, when management defines it (and where the data will come from; nothing exists yet in the DB). It will be a new entry in `SUBVISTAS` in `estadisticas.js` plus its own endpoint.
+3. **Security review leftovers** (see v20 «Not fixed»): ask the user which to tackle next. Suggested order:
+   - **A1 (high):** rotate `sqladmin` (scratchpad script with `Read-Host -AsSecureString`, then update the `sql-password` secret) and prune the per-IP firewall rules (2 `QueryEditorClientIPAddress_*`, personal PCs). Removing `AllowAllWindowsAzureIps` needs VNet/private endpoint (cost: ask first).
+   - **E1 (high, user's side):** regenerate the 3 Power Automate HTTP trigger URLs exposed in the MiraStock chat JS and call them server-side; **E3:** check that Energía/MiraStock pages are protected by Power Pages web roles, not only by the browser lock; **E2:** `ConsultarAccesoPortal` should take the email from the authenticated user; **E4:** MiraStock key out of the URL.
+   - **A2:** SQL auditing (+ Defender, cost); **A3:** ingress IP allow-list or Entra auth with MFA; **R2:** dedicated least-privilege DB user for the app.
+   - Minor: R8 (lockout abuse), R9 (in-memory limiter), R12 (spoofable IP in uvicorn's access log), R13 (base image digest), A4 (ACR managed identity), A5 (`public` SELECT on `core.fn_DiagnosticoStock`).
+4. **Levels 3/4:** catalog of funcionalidades (level 3) and subfuncionalidades (level 4) per portal, when management defines it (and where the data will come from; nothing exists yet in the DB). It will be a new entry in `SUBVISTAS` in `estadisticas.js` plus its own endpoint.
 
 ### Next session: start here
 - Start with **PENDIENTES** above. The older items below are still open unless noted.
 - **v12 deployed on 2026-10-30.** Ask the user whether login, password change and `/administradores` work in Azure (Claude did not log in there). Each admin with the default password must change it within 72 h.
 - **Session closed on 2026-10-30** after the v12 deploy; commits `13e114b` (v12 code), `77f756e` (docs) and its closing commit were pushed to `origin/main`.
-- **v20 deployed on 2026-11-09** (`--0000021`): see v20 and PENDIENTES 1 and 4.
+- **Session closed on 2026-11-09** after the v20 deploy (`--0000021`): see "Session of 2026-11-09" and PENDIENTES 1 and 3.
+- **v20 deployed on 2026-11-09** (`--0000021`): see v20 and PENDIENTES 1 and 3.
 - **v19 deployed on 2026-11-09** (`--0000020`): see v19 and PENDIENTES 1.
 - **Session closed on 2026-11-05** after the v18 deploy (`--0000019`): see "Session of 2026-11-05" and PENDIENTES 1.
 - **v16 deployed on 2026-11-03** (`--0000017`): see PENDIENTES 1.
@@ -297,7 +311,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `cracion_usuario.txt` (repo root) is the user's local file with the `sp_CrearAdministrador` EXECs (no passwords, per the user). It is in `.gitignore`; Claude must not open, delete or commit it. `body.json` is still untracked and undecided.
 - **v11 follow-ups:**
   - With the user's OK (prod read), open `/estadisticas` in Azure and check that `/api/estadisticas/portales` and `/usuarios` answer 200 with the same totals as the local check.
-  - Levels 3/4: see PENDIENTES 3.
+  - Levels 3/4: see PENDIENTES 4.
 0. **v8–v10 heartbeats:** ask the user whether the Power Pages JS (Energía Header with `t`, and MiraStock) is published. Then check in `/historial` that `FinalSesion` / «Tiempo de sesión» fill in for Energía and MiraStock, and that «Atrás» / «Cerrar sesión» shows «Botón» in «Cierre». A Log Analytics query for errors on `/api/latido` is possible: the app logs only errors there, never the key or token, and the access log excludes the route. Each query needs the user's OK.
 1. **Ask the user** whether the welcome emails for Id 55 and 56 arrived and whether code-only sign-in worked for them. Not verified by Claude.
 2. **Sync** (`python -m app.tools.sync_externalid`): there is no evidence it was ever run.

@@ -25,13 +25,14 @@ Desde la v7 incluye además **Logs control de ingresos**: una página de solo le
 |---|---|
 | `/login` | **Ingreso** (v12): correo y contraseña de administrador. Pública |
 | `/cambiar-contrasena` | **Cambiar contraseña** (v12): obligatoria después de entrar con la contraseña por defecto; también voluntaria |
-| `/` | **Portal de administración** (inicio): tres cards, «Estadísticas del Portal Corporativo MiraGroup», «Centro Administración de contactos» y «Centro de administración principal» |
+| `/` | **Portal de administración** (inicio): cuatro cards en cuadrícula de 2 × 2 (1 columna en celular), «Estadísticas del Portal Corporativo MiraGroup», «Centro Administración de contactos», «Centro de administración principal» y «Consulta de base de datos» (v19), con íconos 3D (v20) |
 | `/contactos` | **Centro Administración de contactos**: la administración de usuarios (hasta la v6 estaba en `/`) |
 | `/estadisticas` | **Estadísticas del Portal Corporativo MiraGroup** (v11; desde la v16, inicio con cards): una card «General por portal» y una por portal con el resumen de los últimos 30 días (ver "Estadísticas") |
 | `/estadisticas/general` | v16: gráficos y tabla del total por portal, con su propio filtro de fechas |
 | `/estadisticas/portal/<slug>` | v16: gráficos y pestañas Usuarios (general/detallado) de un portal (`energia`, `mirastock`…); «Portal no encontrado» si no existe. v17: buscador por correo para las tarjetas y los gráficos |
 | `/historial` | **Logs control de ingresos** (historial completo): indicadores, gráfico por día, tabla paginada y exportación a Excel. Sin card en el inicio desde la v11; se llega desde «Historial completo» en `/estadisticas` |
 | `/administradores` | **Centro de administración principal** (v12): administradores en cards y edición con la contraseña de cada uno (ver "Administradores") |
+| `/consulta-bd` | **Consulta de base de datos** (v19, solo lectura): últimos 500 registros de una lista cerrada de 20 tablas de `core`, con buscador «contiene» (ver "Consulta de base de datos") |
 
 Sin sesión, toda página redirige (303) a `/login?siguiente=<ruta>`. Con `DebeCambiarContrasena = 1`, redirige a
 `/cambiar-contrasena`. Comparten `styles.css` y el encabezado (nombre del administrador y «Cerrar sesión»); las páginas
@@ -52,7 +53,8 @@ bajas solo por SQL.
    - `SHA2_512` (creados o restablecidos por SQL): `SHA-512(sal || contraseña en UTF-16LE)`.
    - `PBKDF2_SHA256` (contraseñas cambiadas en Portal3): PBKDF2-HMAC-SHA256, 600.000 iteraciones, sal de 32 bytes.
    - La comparación es en tiempo constante. Si el correo no existe se calcula igual un PBKDF2, así el tiempo de
-     respuesta no revela qué correos son administradores.
+     respuesta no revela qué correos son administradores. Desde la v20 toda verificación cuesta un PBKDF2 (también
+     `SHA2_512`): el tiempo tampoco delata a los administradores con la contraseña por defecto pendiente.
 3. Cualquier fallo (correo desconocido, contraseña mala, `Activo = 0`, bloqueado) responde 401 con el mismo mensaje:
    «Correo o contraseña incorrectos.».
 4. **Bloqueo:** 5 intentos fallidos → `BloqueadoHasta` = ahora + 15 min. Mientras está bloqueado no se verifica la
@@ -60,29 +62,37 @@ bajas solo por SQL.
    `IntentosFallidos = 0`, `BloqueadoHasta = NULL` y `UltimoAcceso` = ahora. El reloj es el de SQL (`SYSUTCDATETIME()`).
 5. **Contraseña por defecto:** con `DebeCambiarContrasena = 1` el login entra, pero toda página redirige a
    `/cambiar-contrasena` y toda API (salvo `/api/me`, logout y cambio de contraseña) responde 403
-   `{detail, cambioRequerido: true}`. Solo sirve durante **72 h** desde `COALESCE(FechaCambioContrasena, FechaAlta)`;
+   `{detail, cambioRequerido: true}`. Solo sirve durante **24 h** (v20; antes 72 h) desde `COALESCE(FechaCambioContrasena, FechaAlta)`;
    después hay que restablecerla por SQL (requiere que `sp_RestablecerContrasenaAdmin` actualice
    `FechaCambioContrasena`, ver el ALTER de la v12).
 6. **Migración:** un login correcto con `SHA2_512` y `DebeCambiarContrasena = 0` pasa el hash a PBKDF2 (misma contraseña).
 7. **Política de contraseña nueva:** mínimo 10 caracteres (máximo 128), con mayúscula, minúscula, número y símbolo;
-   distinta de `Admin@123456` y de la actual.
+   distinta de `Admin@123456` y de la actual. Desde la v20 la regla «distinta de la por defecto» la valida solo el
+   servidor: la contraseña por defecto no aparece en el JS público.
 8. **Límite por IP:** 20 intentos (login + verificación de cards) cada 15 minutos por IP → 429. La IP es la última de
    `X-Forwarded-For` (la agrega el ingress); en memoria, porque la app corre en una sola réplica.
 
-**Sesión:** cookie firmada `mira_admin_sesion` (HttpOnly, Secure, SameSite=Lax) con `{id, h}`: el Id del administrador
-y una huella HMAC de su hash. Vence por inactividad (`SESSION_MAX_AGE_MIN`) y cada request válido la renueva. En cada
+**Sesión:** cookie firmada `mira_admin_sesion` (HttpOnly, Secure, SameSite=Lax) con `{id, h, i}`: el Id del
+administrador, una huella HMAC de su hash y (v20) la hora del ingreso. Vence por inactividad (`SESSION_MAX_AGE_MIN`) y
+cada request válido la renueva, pero desde la v20 nunca dura más de **12 h desde el ingreso** (renovar o cambiar la
+contraseña no reinicia ese tope; las cookies anteriores a la v20 dejaron de valer). En cada
 página y en cada `/api/*` se vuelve a leer al administrador en SQL: si lo desactivan, lo eliminan o cambia su
 contraseña (en Portal3 o restablecida por SQL), la sesión se corta en ese momento (páginas → `/login`, API → 401).
 
 Los POST/PUT/DELETE de `/api/*` exigen `Content-Type: application/json` y `X-Requested-With: mira-admin` (también el
 login). Única excepción: `/api/latido`.
 
+**Cabeceras y límites (v20):** todas las respuestas llevan CSP estricta, `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: no-referrer` y `Strict-Transport-Security: max-age=31536000`; las que no son estáticas, además
+`Cache-Control: no-store`. Los POST/PUT/PATCH/DELETE de `/api/*` con más de 64 KB responden 413, y sin
+`Content-Length` (envío por partes) 411, salvo `/api/latido`, que tiene su propio tope de 8 KB.
+
 ## API
 
 | Método y ruta | Qué hace |
 |---|---|
 | `GET /health` | `{"status":"ok"}` (público) |
-| `POST /api/auth/login` | **Público.** `{correo, contrasena}` → 200 `{redirect, debeCambiarContrasena}` + cookie; 401 genérico; 429 por IP. Acepta `?siguiente=` (solo rutas internas) |
+| `POST /api/auth/login` | **Público.** `{correo, contrasena}` → 200 `{redirect, debeCambiarContrasena}` + cookie (vale hasta 12 h desde el ingreso, v20); 401 genérico; 429 por IP. Acepta `?siguiente=` (solo rutas internas) |
 | `POST /api/auth/logout` | Cierra la sesión → `{redirect: "/login"}` |
 | `POST /api/auth/cambiar-contrasena` | `{actual, nueva, confirmacion}` → `{mensaje, redirect}` y cookie nueva. Funciona aunque deba cambiarla |
 | `GET /api/me` | `{id, nombre, correo, debeCambiarContrasena}` del administrador conectado |
@@ -97,7 +107,7 @@ login). Única excepción: `/api/latido`.
 | `POST /api/usuarios/{id}/enviar-correo` | Asegura la cuenta de acceso y envía o reenvía el correo de bienvenida (ver abajo) |
 | `GET /api/historial` | Historial de accesos, 50 por página (Fecha desc). Filtros más `pagina`. → `{filas, total, pagina, tamano, paginas}` |
 | `GET /api/historial/resumen` | Indicadores con los mismos filtros más `tz_offset_min`. → `{total, usuariosUnicos, porPortal, denegados, tiempoPromedioSeg, tiempoTotalSeg, enCurso, cerradasBoton, porDia}` |
-| `POST /api/latido` | **Público** (CORS para `LATIDO_ORIGINS`). Latido de sesión de Energía o MiraStock (ver "Latidos de sesión"). → 204 |
+| `POST /api/latido` | **Público** (CORS para `LATIDO_ORIGINS`). Latido de sesión de Energía o MiraStock (ver "Latidos de sesión"). → 204; 429 con más de 60 por minuto desde la misma IP (v20) |
 | `GET /api/historial/csv` | CSV con los mismos filtros más `tz_offset_min`, sin paginar (tope 50.000 filas) |
 | `GET /api/estadisticas/portales` | Totales por portal y total general (`desde`/`hasta`). → `{portales: [...], total}`; desde la v16 cada portal trae `slug` (ver "Estadísticas") |
 | `GET /api/estadisticas/portales/csv` | El mismo cuadro en CSV, con fila «Total Portal Corporativo» (`tz_offset_min`) |
@@ -106,6 +116,8 @@ login). Única excepción: `/api/latido`.
 | `GET /api/estadisticas/resumen` | v17: tarjetas de un portal (`portal` obligatorio, `desde`/`hasta`, `correo` opcional: contiene). → `{portal, correo, usuariosUnicos, sesiones, segundosTotales, promedioSeg, sesionesMedidas, ultimaConexion, sinActividad}` |
 | `GET /api/estadisticas/series` | v16: sesiones, segundos y usuarios por día local, por portal y en total (`portal` opcional, `desde`/`hasta`, `tz_offset_min`; v17: `correo` opcional, solo con `portal`; ver "Gráficos") |
 | `GET /api/estadisticas/distribucion` | v16: tipos de cierre, rangos de duración y matriz día × hora de un portal (`portal` obligatorio, `desde`/`hasta`, `tz_offset_min`; v17: `correo` opcional) |
+| `GET /api/consulta-bd/tablas` | v19: la lista cerrada de tablas (sale del código, no consulta la base). → `{tope, tablas: [{clave, nombre, camposBusqueda}]}` |
+| `GET /api/consulta-bd/filas` | v19: `tabla` (clave exacta, obligatoria) y `q` opcional (contiene, ≤ 100). → `{tabla, clave, columnas: [{nombre, tipo}], camposBusqueda, busqueda, tope, mostrando, total, totalTabla, filas}`. 422 si la tabla no existe, si `q` es largo o si la tabla no tiene buscador; 503 si falla la base |
 
 Los errores siempre vienen como `{"detail": "mensaje en español"}`. `avisoCuenta: true` indica que la operación en
 SQL salió bien pero falló la cuenta de acceso; el `mensaje` trae el motivo y la interfaz lo muestra como aviso.
@@ -336,8 +348,11 @@ GET /api/estadisticas/distribucion?portal=Energía&desde&hasta&tz_offset_min
   pantallas de alta densidad y un halo claro (`drop-shadow`) para que la parte azul marino se lea sobre el fondo
   oscuro. Alternativa preparada: la clase `logo-placa` (placa clara redondeada). `app/media/` no se sirve ni se sube
   al repo.
-- **Cards del menú de inicio** (`card-menu`, solo las 3 de `/`): gris metálico tipo acero cepillado con brillo en el
-  borde superior; el hover sigue igual (sube, brillo cian y sombra).
+- **Cards del menú de inicio** (`card-menu`, solo las de `/`; 4 desde la v19): gris metálico tipo acero cepillado con
+  brillo en el borde superior; el hover sigue igual (sube, brillo cian y sombra).
+- **Íconos 3D (v20):** `app/static/img/icono-{estadisticas,contactos,administradores,consulta-bd}.png` (96 px) y
+  `@2x` (176 px), PNG con fondo transparente, decorativos (`alt=""`). Se ven a 88 px (72 px en celular), sin recuadro;
+  en hover suben, crecen un 6 % y brillan en cian.
 
 ### Buscador por correo de los gráficos (v17)
 
@@ -357,6 +372,30 @@ Solo en la vista de cada portal (`/estadisticas/portal/<slug>`); la vista genera
   los usuarios únicos con un `COUNT(DISTINCT Correo)` sobre todo el rango (no sumando días). `/portales` no se tocó.
 - `/series` con `correo` y sin `portal` → 422 «Indica el portal para buscar por correo.». Sin `correo`, todos los
   endpoints responden igual que en la v16.
+
+## Consulta de base de datos (v19)
+
+Página `/consulta-bd` (card «Consulta de base de datos» del inicio). **Solo lectura**: no permite crear, editar ni borrar.
+
+- **Lista cerrada de 20 tablas** de `core` (`app/consulta_bd.py`, `TABLAS`): AdministradoresPortal, ColaRecepcion,
+  ColaTicketsControl, Contrapropuesta, ContrataDireccion, Descargas, HistorialAccesos, Incidencias, LogConsulta,
+  Observados, Propuesta, Registros_SkuComprometido, ReglaClasificacion, ReservasPedido, SesionesAgente,
+  SKUComprometido, SolicitudDetalle, Solicitudes, StockLurinERI y UsuariosEntel. Las columnas de cada tabla están
+  escritas en el código: una columna nueva en la base no aparece hasta agregarla ahí.
+- **Columnas que nunca se piden a la base:** `ContrasenaHash`, `ContrasenaSal`, `AlgoritmoHash`, `IntentosFallidos` y
+  `BloqueadoHasta` de AdministradoresPortal (las tres últimas desde la v20), y `Token` de HistorialAccesos,
+  SesionesAgente y Descargas.
+- **Qué muestra:** los últimos 500 registros según el orden fijo de cada tabla (Id o fecha descendente;
+  StockLurinERI por `FechaCarga DESC, Llave`; ContrataDireccion alfabético) y el contador «Mostrando N de TOTAL».
+- **Buscador:** un campo que busca «contiene» en **toda la tabla** (hasta 500 coincidencias) en sus columnas de SKU,
+  correo y ticket JIRA (y `Solicitante`, `Usuario` o `Referencia` donde existen); la etiqueta nombra las columnas. Si la
+  tabla no tiene ninguna, el buscador no aparece. Mismo escape de `LIKE` que el resto de la app.
+- **SQL:** se arma al iniciar la app solo con el catálogo; lo único que llega del usuario es la clave de la tabla (se
+  busca en la lista) y el texto, que va siempre como parámetro. Textos largos cortados a 300 caracteres + «…»;
+  tiempo máximo de 20 s por consulta. Usa la misma conexión de la app (decisión del usuario en la v19).
+- **Tipos:** fechas en hora local del navegador (en la base se tratan como UTC), decimales sin ceros de relleno,
+  bits «Sí»/«No», NULL «—». La tabla tiene encabezado fijo y scroll horizontal.
+- **Log:** la tabla, la cantidad de filas y (v20) el Id del administrador que consultó; nunca el texto buscado.
 
 ## Cuentas de acceso en External ID
 
@@ -452,6 +491,8 @@ para medir cuánto dura cada sesión. Es **público**: no usa `require_admin` ni
 usuario, no esta app.
 
 - **Body:** JSON de hasta 8 KB, con `Content-Type: application/json` o `text/plain` (para `navigator.sendBeacon`).
+- **Límite (v20):** 60 latidos por minuto por IP (la última de `X-Forwarded-For`); el resto responde 429 sin leer el
+  body ni tocar la base. Cada usuario late cada 2 min, así que alcanza para unos 120 usuarios detrás de una misma IP.
   - MiraStock: `{"tipo": "mirastock", "t": "<guid de core.SesionesAgente.Token>"}`
   - Energía (desde v10): `{"tipo": "energia", "t": "<guid de core.HistorialAccesos.Token>"}`
   - Energía (modo anterior, sigue aceptado): `{"tipo": "energia", "token": "<token de /_services/auth/token del sitio
@@ -468,7 +509,8 @@ usuario, no esta app.
   de 12 h, no está cerrada (`COALESCE(CierreExplicito, 0) = 0`) y sigue viva. Se acepta aunque ya pasó su `ExpiraEn`.
   En el mismo UPDATE (v15) **renueva la llave**: `ExpiraEn` pasa a ahora + 30 min, sin acortarla nunca si ya vencía
   después. El flujo `GenerarAccesoMiraStock` crea las llaves con 30 min. Un latido ignorado por la regla de 60 s
-  tampoco renueva.
+  tampoco renueva. Desde la v20 la renovación tiene tope: nunca pasa de `CreadoEn` + 4 h y una llave que ya venció no
+  se renueva (el latido igual registra `FinalSesion`). Así una llave filtrada no se puede mantener viva con latidos.
 - **MiraStock con cierre:** sin la regla de 60 s, pone `FinalSesion = SYSUTCDATETIME()`, `CierreExplicito = 1` y
   adelanta `ExpiraEn` a ahora si estaba en el futuro: la llave queda anulada y el agente ya no la acepta. Una sesión ya
   cerrada, o que ya no está viva (v15), no se toca.
@@ -514,6 +556,7 @@ app/config.py     Configuración (pydantic-settings)
 app/auth.py       Login, cookie de sesión, permisos de edición, límite por IP, require_admin y tokens de Energía
 app/claves.py     Hash de contraseñas (SHA2_512 y PBKDF2_SHA256) y política
 app/db.py         Consultas parametrizadas (pyodbc + ODBC Driver 18)
+app/consulta_bd.py Consulta de base de datos de solo lectura (v19): catálogo cerrado de 20 tablas y su SQL fijo
 app/mailer.py     msal + Graph sendMail + plantilla HTML del correo
 app/externalid.py Cuentas de acceso en External ID (msal + Graph /users)
 app/tools/        sync_externalid.py: sincronización inicial de cuentas (se ejecuta en local)
@@ -521,9 +564,9 @@ app/docs/         Guía de ingreso en PDF (ya no se adjunta al correo)
 app/schemas.py    Validaciones de entrada
 app/static/       inicio.html (/), contactos.html + app.js (/contactos), historial.html + historial.js (/historial),
                   estadisticas.html + estadisticas.js (/estadisticas), administradores.html + administradores.js,
-                  login.html + login.js, cambiar-contrasena.html + cambiar.js,
+                  login.html + login.js, cambiar-contrasena.html + cambiar.js, consulta-bd.html + consulta-bd.js (v19),
                   comun.js (API, avisos, modales, encabezado, política de contraseñas, formatos y descarga de CSV),
-                  styles.css, img/logo-miragroup.png + @2x (logo, v18)
+                  styles.css, img/logo-miragroup.png + @2x (logo, v18), img/icono-*.png + @2x (íconos del inicio, v20)
 app/templates/    error.html (página de error, p. ej. 503 si la BD no responde)
 tests/            pytest (BD, Graph y External ID simulados)
 ```
@@ -598,12 +641,12 @@ Luego usa `SQL_USER=mira_admin_app` y esa clave en el Container App.
 | Suscripción | CreditosCopilot1 (`38b3f030-c7b5-4d38-822b-c533f88cd34a`) |
 | Container App | `ca-mira-admin` en `RG-COPILOT-DEV`, East US |
 | Environment (reutilizado) | `managedEnvironment-rgscripth25prod-818f` (`rg-script-h25-prod`, East US) |
-| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v18` (revisión `ca-mira-admin--0000019`, 2026-11-05: logo de MiraGroup, encabezado blanco fijo, login plateado y cards del menú en acero, `?v=18`). La v13 no tiene imagen propia: salió dentro de la v14. El próximo tag es `v19` |
+| Registro (reutilizado) | `acrscripth25prod.azurecr.io`, imagen `mira-admin-app:v20` (revisión `ca-mira-admin--0000021`, 2026-11-09: correcciones de seguridad e íconos 3D del inicio, `?v=20`). Antes, el mismo día, la v19 (`--0000020`: consulta de base de datos). La v13 no tiene imagen propia: salió dentro de la v14. El próximo tag es `v21` |
 | Recursos | 0.25 vCPU, 0.5 GiB, réplicas mín. 0 / máx. 1, ingress externo solo HTTPS (HTTP redirige) |
 | Pull de la imagen | Usuario admin del ACR (guardado como secret del Container App). Con rol Contributor no se puede asignar `AcrPull` a una identidad administrada |
-| Secrets | `sql-password`, `session-secret`, `graph-client-secret` (secreto de la app "Portal Externo - Envio de correos"), `extid-client-secret` (secreto de la app de External ID) |
+| Secrets | `sql-password`, `session-secret`, `graph-client-secret` (secreto de la app "Portal Externo - Envio de correos"), `extid-client-secret` (secreto de la app de External ID) y el del pull del ACR. La v19 y la v20 no agregaron secrets ni variables |
 | Correo | `MAIL_ENABLED=true`, `MAIL_SENDER=no-reply@miragroup.cl`, `GRAPH_CLIENT_ID=e722c6e6-d604-4c2d-88ad-01c62a2c9235` (activado el 2026-10-20) |
-| Firewall SQL | Regla existente `AllowAllWindowsAzureIps` (0.0.0.0) en `sqlcopilotprd01` |
+| Firewall SQL | Regla existente `AllowAllWindowsAzureIps` (0.0.0.0) en `sqlcopilotprd01`, más 10 reglas por IP (revisadas el 2026-11-09; ver "Pendientes de seguridad recomendados") |
 
 Con réplicas mínimas 0, la primera visita después de un rato sin uso puede tardar unos segundos (arranque en frío).
 
@@ -715,6 +758,18 @@ Son precios de lista aproximados para East US. Confírmalos en la calculadora de
 
 ### Pendientes de seguridad recomendados
 
+Revisión de seguridad del 2026-11-09. La v20 corrigió R1, R3, R4, R5, R6, R7, R10, R11 y R16. Siguen abiertos:
+
+- **Prioridad alta:** cambiar la clave de `sqladmin` (se expuso en un chat) y actualizar el secret `sql-password`;
+  borrar las reglas de firewall por IP que ya no se usen (incluye dos `QueryEditorClientIPAddress_*`).
+- Activar la auditoría de SQL y evaluar Microsoft Defender for SQL (hoy están desactivados; tienen costo).
+- Restringir el ingress por IP o poner autenticación de Entra con MFA delante del panel (hoy es externo y sin MFA).
+- Fuera del repo (Power Pages / Power Automate, a cargo del usuario): las URL con `sig=` de 3 flujos HTTP están en el
+  JS público del chat de MiraStock (regenerarlas y llamarlas desde el servidor); `ConsultarAccesoPortal` toma el
+  correo del navegador; los candados de Energía y MiraStock se validan en el navegador; la llave de MiraStock viaja en
+  la URL (`?t=`).
+- Menores: bloqueo de cuentas usable para negar el servicio, límite por IP en memoria, IP falsificable en el access
+  log de uvicorn, imagen base sin digest, `public` con SELECT sobre `core.fn_DiagnosticoStock`.
 - Usar el usuario dedicado `mira_admin_app` (ver "Base de datos: usuario dedicado") en vez de `sqladmin`, y cambiar la clave de `sqladmin`.
 - La regla `AllowAllWindowsAzureIps` permite conexiones desde cualquier recurso de Azure, también de otros clientes.
   La opción más cerrada es un environment con VNet y un private endpoint al SQL (tiene costo: pedir OK antes).
