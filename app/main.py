@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app import auth, claves, db, externalid, mailer
+from app import auth, claves, consulta_bd, db, externalid, mailer
 from app.auth import require_admin
 from app.config import get_settings
 from app.schemas import (
@@ -96,6 +96,7 @@ _ESTADISTICAS_HTML = _leer_plantilla(STATIC_DIR / "estadisticas.html")
 _ESTADISTICAS_GENERAL_HTML = _leer_plantilla(STATIC_DIR / "estadisticas-general.html")
 _ESTADISTICAS_PORTAL_HTML = _leer_plantilla(STATIC_DIR / "estadisticas-portal.html")
 _ADMINISTRADORES_HTML = _leer_plantilla(STATIC_DIR / "administradores.html")
+_CONSULTA_BD_HTML = _leer_plantilla(STATIC_DIR / "consulta-bd.html")
 _LOGIN_HTML = _leer_plantilla(STATIC_DIR / "login.html")
 _CAMBIAR_HTML = _leer_plantilla(STATIC_DIR / "cambiar-contrasena.html")
 _ERROR_HTML = _leer_plantilla(TEMPLATES_DIR / "error.html")
@@ -348,6 +349,11 @@ def estadisticas_portal(request: Request, slug: str):
 @app.get("/administradores", response_class=HTMLResponse)
 def administradores(request: Request):
     return _pagina_protegida(request, _ADMINISTRADORES_HTML)
+
+
+@app.get("/consulta-bd", response_class=HTMLResponse)
+def consulta_bd_pagina(request: Request):
+    return _pagina_protegida(request, _CONSULTA_BD_HTML)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1356,4 +1362,63 @@ def api_estadisticas_distribucion(
             "sinMedir": datos["sinMedir"],
         },
         "calor": datos["calor"],
+    }
+
+# ---------------------------------------------------------------------------
+# Consulta de base de datos (v19, solo lectura: app/consulta_bd.py)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/consulta-bd/tablas")
+def api_consulta_bd_tablas(admin: dict = Depends(require_admin)):
+    """Lista cerrada de tablas (sale del catálogo; no consulta la base)."""
+    return {
+        "tope": consulta_bd.TOPE_FILAS,
+        "tablas": [
+            {"clave": t.nombre, "nombre": t.nombre_completo, "camposBusqueda": list(t.busqueda)}
+            for t in consulta_bd.TABLAS.values()
+        ],
+    }
+
+
+@app.get("/api/consulta-bd/filas")
+def api_consulta_bd_filas(
+    admin: dict = Depends(require_admin),
+    tabla: str | None = None,
+    q: str | None = None,
+):
+    """Últimos 500 registros de la tabla, o hasta 500 coincidencias de `q` (contiene) en sus columnas de búsqueda."""
+    errores: dict[str, str] = {}
+    clave = (tabla or "").strip()
+    elegida = consulta_bd.TABLAS.get(clave)
+    if not clave:
+        errores["tabla"] = "Elige una tabla."
+    elif elegida is None:
+        errores["tabla"] = "La tabla no está disponible para consulta."
+    texto = (q or "").strip() or None
+    if texto is not None:
+        if len(texto) > consulta_bd.MAX_LARGO_BUSQUEDA:
+            errores["q"] = f"La búsqueda admite hasta {consulta_bd.MAX_LARGO_BUSQUEDA} caracteres."
+        elif elegida is not None and not elegida.busqueda:
+            errores["q"] = "Esta tabla no tiene columnas para buscar."
+    if errores:
+        raise ErrorValidacion(errores)
+
+    datos = consulta_bd.consultar(elegida, texto)
+    # Nunca se registra el texto buscado.
+    log.info(
+        "Consulta de base de datos: %s (%s filas%s)",
+        elegida.nombre_completo, len(datos["filas"]), ", con búsqueda" if texto else "",
+    )
+    return {
+        "tabla": elegida.nombre_completo,
+        "clave": elegida.nombre,
+        "columnas": [{"nombre": c, "tipo": t} for c, t in elegida.columnas],
+        "camposBusqueda": list(elegida.busqueda),
+        "busqueda": texto,
+        "tope": consulta_bd.TOPE_FILAS,
+        "mostrando": len(datos["filas"]),
+        "total": datos["total"],
+        "totalTabla": datos["totalTabla"],
+        "filas": datos["filas"],
     }

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Consulta de base de datos | MiraGroup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/styles.css?v=19">
+  <script src="/static/comun.js?v=19" defer></script>
+  <script src="/static/consulta-bd.js?v=19" defer></script>
+</head>
+<body>
+  <a class="saltar" href="#contenido">Saltar al contenido</a>
+
+  <header class="encabezado">
+    <div class="marca">
+      <img src="/static/img/logo-miragroup.png?v=19" srcset="/static/img/logo-miragroup.png?v=19 1x, /static/img/logo-miragroup@2x.png?v=19 2x" width="240" height="73" alt="MiraGroup" class="logo">
+      <h1>Consulta de base de datos</h1>
+    </div>
+    <nav class="nav-inicio" aria-label="Navegación">
+      <a class="btn btn-fantasma" href="/">← Inicio</a>
+    </nav>
+    <div class="sesion">
+      <span class="admin-nombre" id="admin-nombre" aria-label="Administrador conectado"></span>
+      <button type="button" class="btn btn-fantasma" id="btn-logout">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <main id="contenido" class="contenido">
+    <form class="barra card barra-consulta" id="form-consulta" aria-label="Consulta" novalidate>
+      <div class="campo campo-tabla">
+        <label for="c-tabla">Tabla</label>
+        <select id="c-tabla" disabled>
+          <option value="">Cargando tablas…</option>
+        </select>
+      </div>
+      <div class="campo campo-buscar" id="c-buscador" hidden>
+        <label for="c-texto" id="c-etiqueta">Buscar</label>
+        <input type="search" id="c-texto" maxlength="100" placeholder="Contiene…" autocomplete="off" aria-describedby="e-texto">
+      </div>
+      <div class="barra-acciones" id="c-acciones" hidden>
+        <button type="submit" class="btn btn-primario" id="btn-buscar">Buscar</button>
+        <button type="button" class="btn btn-secundario" id="btn-limpiar">Limpiar</button>
+      </div>
+      <p class="error-campo error-consulta" id="e-texto" role="alert"></p>
+    </form>
+
+    <p class="aviso-solo-lectura">Solo lectura: esta pantalla no permite crear, editar ni borrar registros. Fechas en tu hora local.</p>
+
+    <section class="card card-tabla-bd" aria-labelledby="titulo-tabla">
+      <h2 id="titulo-tabla" class="titulo-tabla-bd">Elige una tabla</h2>
+      <p class="resumen" id="resumen" aria-live="polite"></p>
+
+      <div id="estado-carga" class="estado" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span>Cargando registros…</span>
+      </div>
+      <div id="estado-vacio" class="estado" hidden>
+        <p id="texto-vacio">La tabla no tiene registros.</p>
+      </div>
+      <div id="estado-error" class="estado estado-error" role="alert" hidden>
+        <p id="texto-error">No se pudieron cargar los registros.</p>
+        <button type="button" class="btn btn-secundario" id="btn-reintentar">Reintentar</button>
+      </div>
+
+      <div class="tabla-bd-envoltura" id="envoltura" tabindex="0" role="region" aria-labelledby="titulo-tabla" hidden>
+        <table class="tabla-bd" id="tabla">
+          <thead><tr id="tabla-encabezado"></tr></thead>
+          <tbody id="tabla-cuerpo"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- Pantalla de sesión vencida -->
+  <div class="bloqueo" id="bloqueo" hidden>
+    <div class="card card-aviso" role="alertdialog" aria-modal="true" aria-labelledby="bloqueo-titulo" aria-describedby="bloqueo-texto">
+      <img src="/static/img/logo-miragroup.png?v=19" srcset="/static/img/logo-miragroup.png?v=19 1x, /static/img/logo-miragroup@2x.png?v=19 2x" width="240" height="73" alt="MiraGroup" class="logo">
+      <h2 id="bloqueo-titulo">Tu sesión venció</h2>
+      <p id="bloqueo-texto">Por seguridad, vuelve a ingresar con tu correo y contraseña.</p>
+      <a class="btn btn-primario" href="/login" id="bloqueo-link">Ingresar</a>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>

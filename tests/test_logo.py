@@ -9,8 +9,8 @@ import pytest
 APP = Path(__file__).resolve().parent.parent / "app"
 PAGINAS = sorted((APP / "static").glob("*.html")) + [APP / "templates" / "error.html"]
 LOGO = (
-    '<img src="/static/img/logo-miragroup.png?v=18" srcset="/static/img/logo-miragroup.png?v=18 1x, '
-    '/static/img/logo-miragroup@2x.png?v=18 2x" width="240" height="73" alt="MiraGroup" class="logo">'
+    '<img src="/static/img/logo-miragroup.png?v=19" srcset="/static/img/logo-miragroup.png?v=19 1x, '
+    '/static/img/logo-miragroup@2x.png?v=19 2x" width="240" height="73" alt="MiraGroup" class="logo">'
 )
 
 
@@ -53,7 +53,7 @@ def test_no_se_sirven_el_logo_viejo_ni_los_originales(cliente, ruta):
 
 def test_cards_del_menu_de_inicio_en_gris_metalico(cliente_admin):
     inicio = cliente_admin.get("/").text
-    assert inicio.count('class="card card-modulo card-menu"') == 3
+    assert inicio.count('class="card card-modulo card-menu"') == 4  # v19: + «Consulta de base de datos»
     # Solo el menú de inicio: las cards de Estadísticas y Administradores no cambian.
     for archivo in ("estadisticas-inicio.js", "administradores.js", "estadisticas.html", "administradores.html"):
         assert "card-menu" not in (APP / "static" / archivo).read_text(encoding="utf-8")

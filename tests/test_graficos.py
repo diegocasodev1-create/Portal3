@@ -359,10 +359,10 @@ def test_bordes_de_duracion_coinciden_con_el_sql():
 def test_pagina_carga_chartjs_antes_que_los_graficos(cliente_admin, ruta):
     texto = cliente_admin.get(ruta).text
     orden = [
-        '<script src="/static/vendor/chart.umd.4.4.7.min.js?v=18" defer></script>',
-        '<script src="/static/comun.js?v=18" defer></script>',
-        '<script src="/static/graficos.js?v=18" defer></script>',
-        '<script src="/static/estadisticas.js?v=18" defer></script>',
+        '<script src="/static/vendor/chart.umd.4.4.7.min.js?v=19" defer></script>',
+        '<script src="/static/comun.js?v=19" defer></script>',
+        '<script src="/static/graficos.js?v=19" defer></script>',
+        '<script src="/static/estadisticas.js?v=19" defer></script>',
     ]
     posiciones = [texto.index(s) for s in orden]
     assert posiciones == sorted(posiciones)

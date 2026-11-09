@@ -319,9 +319,13 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
 
 /* ---------- Inicio: módulos ---------- */
 
+/* v19: 4 cards en el menú de inicio → cuadrícula de 2 × 2 (1 columna en celular). */
 .modulos {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px;
   max-width: 960px; margin: 4vh auto 0;
+}
+@media (max-width: 600px) {
+  .modulos { grid-template-columns: minmax(0, 1fr); }
 }
 /* v17: cards con degradado, sombra en reposo y, en hover/teclado, suben y brillan con su color
    (--brillo: cian por defecto; en Estadísticas, el color de cada portal). */
@@ -715,4 +719,49 @@ fieldset.portales[aria-invalid="true"] { border-color: var(--peligro); }
   .sesion .btn { flex: 1 1 auto; }
   .admin-nombre { width: 100%; }
   .acciones .btn { flex: 1 1 auto; }
+}
+
+
+/* ---------- v19: Consulta de base de datos (solo lectura) ---------- */
+
+.barra-consulta .campo-tabla { flex: 0 1 340px; }
+.barra-consulta .error-consulta { flex: 1 1 100%; }
+.aviso-solo-lectura { margin: -8px 4px 16px; font-size: 0.85rem; color: var(--texto-2); }
+
+.card-tabla-bd { padding: 16px 0 0; overflow: hidden; }
+.titulo-tabla-bd { padding: 0 20px; font-size: 1.05rem; overflow-wrap: anywhere; }
+.card-tabla-bd .resumen { padding: 4px 20px 10px; }
+
+/* La tabla se desplaza dentro de su contenedor (vertical y horizontal); el encabezado queda fijo arriba. */
+.tabla-bd-envoltura {
+  overflow: auto; max-height: max(320px, calc(100vh - 300px));
+  border-top: 1px solid var(--borde-suave);
+}
+.tabla-bd-envoltura:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; }
+.tabla-bd { min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.86rem; }
+.tabla-bd th, .tabla-bd td {
+  padding: 8px 12px; text-align: left; vertical-align: top; white-space: nowrap;
+  border-bottom: 1px solid var(--borde-suave);
+}
+/* Fondo opaco para que las filas no se vean a través del encabezado fijo (#a9bcd4 sobre #0c1d38: 8.7:1). */
+.tabla-bd th {
+  position: sticky; top: 0; z-index: 1;
+  background: #0c1d38; color: var(--texto-2);
+  font-size: 0.78rem; font-weight: 600; letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--borde);
+}
+.tabla-bd tbody tr:nth-child(even) { background: rgba(169, 188, 212, 0.04); }
+.tabla-bd tbody tr:hover { background: rgba(41, 184, 236, 0.08); }
+.tabla-bd tbody tr:last-child td { border-bottom: 0; }
+.tabla-bd .celda-num { text-align: right; font-variant-numeric: tabular-nums; }
+.tabla-bd .celda-texto { max-width: 36ch; overflow: hidden; text-overflow: ellipsis; }
+/* NULL («—») en gris: ≈ 5.5:1 sobre el fondo de la card. */
+.tabla-bd .celda-nula { color: rgba(169, 188, 212, 0.75); }
+
+@media (max-width: 600px) {
+  .barra-consulta .campo-tabla { flex: 1 1 100%; }
+  .titulo-tabla-bd { padding: 0 16px; }
+  .card-tabla-bd .resumen { padding: 4px 16px 10px; }
+  .tabla-bd th, .tabla-bd td { padding: 7px 10px; }
+  .tabla-bd .celda-texto { max-width: 26ch; }
 }
